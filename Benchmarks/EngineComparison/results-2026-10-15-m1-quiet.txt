@@ -1,0 +1,32 @@
+300 steps at 60 Hz · ms per step, mean / worst · Apple M1
+
+tori    25  RealityBox3D, 1 worker    0.08 /    0.71   engine    0.05   mean y 0.07 m, 0 out
+tori    25  RealityBox3D, 4 workers    0.10 /    1.37   engine    0.07   mean y 0.07 m, 0 out
+tori    25  SDFCollisionKit, multithreaded    0.27 /    1.41   engine    0.21   mean y 0.09 m, 0 out
+tori    25  RealityKit    0.17 /    2.52   engine       –   mean y 0.08 m, 0 out
+
+tori   100  RealityBox3D, 1 worker    0.59 /    2.62   engine    0.50   mean y 0.22 m, 0 out
+tori   100  RealityBox3D, 4 workers    0.57 /    2.18   engine    0.48   mean y 0.22 m, 0 out
+tori   100  SDFCollisionKit, multithreaded    1.33 /    2.88   engine    1.14   mean y 0.26 m, 0 out
+tori   100  RealityKit    1.75 /    4.69   engine       –   mean y 0.22 m, 0 out
+
+tori   400  RealityBox3D, 1 worker    4.48 /   15.58   engine    4.07   mean y 0.82 m, 0 out
+tori   400  RealityBox3D, 4 workers    3.61 /   11.60   engine    3.20   mean y 0.82 m, 0 out
+tori   400  SDFCollisionKit, multithreaded    9.69 /   16.06   engine    8.82   mean y 0.95 m, 0 out
+tori   400  RealityKit   12.96 /   20.77   engine       –   mean y 0.79 m, 0 out
+
+boxes   100  RealityBox3D, 1 worker    0.10 /    0.43   engine    0.02   mean y 0.05 m, 0 out
+boxes   100  RealityBox3D, 4 workers    0.12 /    1.15   engine    0.03   mean y 0.05 m, 0 out
+boxes   100  SDFCollisionKit, multithreaded    0.38 /    2.03   engine    0.20   mean y 0.07 m, 0 out
+boxes   100  RealityKit    0.11 /    0.58   engine       –   mean y 0.06 m, 0 out
+
+boxes   400  RealityBox3D, 1 worker    0.60 /    1.93   engine    0.22   mean y 0.18 m, 0 out
+boxes   400  RealityBox3D, 4 workers    0.65 /    5.98   engine    0.27   mean y 0.18 m, 0 out
+boxes   400  SDFCollisionKit, multithreaded    3.54 /   12.16   engine    2.77   mean y 0.20 m, 0 out
+boxes   400  RealityKit    1.15 /    2.17   engine       –   mean y 0.15 m, 0 out
+
+boxes  1600  RealityBox3D, 1 worker    4.85 /  208.01   engine    2.63   mean y 0.50 m, 0 out
+boxes  1600  RealityBox3D, 4 workers    2.14 /    5.86   engine    0.68   mean y 0.50 m, 0 out
+boxes  1600  SDFCollisionKit, multithreaded   33.15 /   65.30   engine   29.51   mean y 0.62 m, 0 out
+boxes  1600  RealityKit    5.52 /   15.23   engine       –   mean y 0.47 m, 0 out
+

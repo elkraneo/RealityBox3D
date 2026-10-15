@@ -1,0 +1,14 @@
+{
+  "originHash" : "888c2852079631dcf35a24c26df24b1b4f775754e2dad78a8a3a736190dd56d6",
+  "pins" : [
+    {
+      "identity" : "sdfcollisionkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/elkraneo/SDFCollisionKit",
+      "state" : {
+        "revision" : "30ddbb90b1932a000f17af9cf22c4cb8f9672937"
+      }
+    }
+  ],
+  "version" : 3
+}
