@@ -3,47 +3,43 @@ import RealityKit
 import Foundation
 
 extension B3World {
-    /// After a step: destroys the joints Box3D reports over their break limit, so the next step
-    /// runs without them. Box3D reports only joints with a limit, since the others have none.
+    /// After a step, before its `DidSimulate` handlers: destroys the joints Box3D reports over
+    /// their break limit and removes them from the joints component, so handlers and the next
+    /// steps see them gone. Box3D reports only joints with a limit, since the others have none.
     func collectJointBreaks() {
         let events = b3World_GetJointEvents(id)
         guard events.count > 0 else { return }
+        var broken: [(slot: Int, force: SIMD3<Float>, torque: SIMD3<Float>)] = []
         for i in 0..<Int(events.count) {
             let jointId = events.jointEvents[i].jointId
             guard let slot = jointSlots.firstIndex(where: { $0.id == jointId }), b3Joint_IsValid(jointId) else { continue }
-            let force = b3Joint_GetConstraintForce(jointId).simd, torque = b3Joint_GetConstraintTorque(jointId).simd
+            broken.append((slot, b3Joint_GetConstraintForce(jointId).simd, b3Joint_GetConstraintTorque(jointId).simd))
             b3DestroyJoint(jointId, true)
-            jointSlots[slot].id = nil
-            brokenJoints.append((slot, force, torque))
         }
-    }
-
-    /// At the end of the frame: removes broken joints from the joints component, so the app sees
-    /// them gone and the next sync does not rebuild them. Returns the events to send.
-    func finishJointBreaks() -> [B3JointEvents.Broke] {
-        guard !brokenJoints.isEmpty else { return [] }
-        let broken = brokenJoints.sorted { $0.slot > $1.slot }
-        brokenJoints.removeAll()
         var applied = appliedJoints?.joints ?? []
         var component = root?.components[B3PhysicsJointsComponent.self]
-        var events: [B3JointEvents.Broke] = []
-        // A handler may have edited the component during the frame. While it holds as many joints
-        // as were applied, joints keep their places, so a broken one goes by its index even if
-        // its parameters changed; otherwise it goes by value.
-        let sameLayout = component?.joints.count == applied.count
-        for b in broken where b.slot < applied.count {
+        for b in broken.sorted(by: { $0.slot > $1.slot }) where b.slot < applied.count {
             let joint = applied.remove(at: b.slot)
             jointSlots.remove(at: b.slot)
+            // Between frames the component equals the applied joints; a `WillSimulate` handler
+            // may have edited it since, then the joint is found by value.
             if let c = component {
-                let index = sameLayout ? b.slot : c.joints.firstIndex { $0.isEqual(to: joint) }
-                if let index, index < c.joints.count { component?.joints.remove(at: index) }
+                let index = b.slot < c.joints.count && c.joints[b.slot].isEqual(to: joint)
+                    ? b.slot : c.joints.firstIndex { $0.isEqual(to: joint) }
+                if let index { component?.joints.remove(at: index) }
             }
-            events.append(B3JointEvents.Broke(joint: joint, force: b.force, torque: b.torque))
+            brokenJoints.append(B3JointEvents.Broke(joint: joint, force: b.force, torque: b.torque))
         }
         appliedJoints = B3PhysicsJointsComponent(joints: applied)
         if let root, let component { root.components.set(component) }
+    }
+
+    /// At the end of the frame: the joints that broke during it, oldest first.
+    func finishJointBreaks() -> [B3JointEvents.Broke] {
+        guard !brokenJoints.isEmpty else { return [] }
+        defer { brokenJoints.removeAll() }
         if !anchors.isEmpty { pruneAnchors() }
-        return events.reversed()
+        return brokenJoints
     }
 
     func dispatch(_ events: [B3JointEvents.Broke]) {

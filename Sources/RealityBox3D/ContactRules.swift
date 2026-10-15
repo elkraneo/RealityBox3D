@@ -26,7 +26,18 @@ final class OneWayShapes: @unchecked Sendable {
     struct Key: Hashable { let index: Int32, generation: UInt16 }
     var directions: [Key: SIMD3<Float>] = [:]
 
+    /// A one-way body: where its shapes point in its own space, mirrored by its scale.
+    struct Source { var body: b3BodyId; let local: SIMD3<Float>; let shapes: [Key] }
+
     init(directions: [Key: SIMD3<Float>] = [:]) { self.directions = directions }
+
+    /// Points each source's shapes along its body's current rotation.
+    func refresh(_ sources: [Source]) {
+        for source in sources where b3Body_IsValid(source.body) {
+            let d = b3Body_GetRotation(source.body).simd.act(source.local)
+            for key in source.shapes { directions[key] = d }
+        }
+    }
 
     /// A contact on a one-way shape counts only when it pushes the other body along the shape's
     /// direction, within about 45°.
@@ -54,16 +65,20 @@ extension B3World {
         b3World_SetPreSolveCallback(world, OneWayShapes.preSolve, Unmanaged.passUnretained(oneWay).toOpaque())
     }
 
-    /// Points each one-way shape's direction along its body's current rotation. Runs before the
-    /// steps of a frame.
+    /// Points each one-way shape's direction along its body's current rotation. Runs before
+    /// every fixed step.
     func refreshOneWayShapes() {
         guard !oneWayRecords.isEmpty else { return }
-        for r in oneWayRecords.values {
-            guard let local = r.collision.oneWayDirection, simd_length_squared(local) > 0 else { continue }
+        oneWayShapes.refresh(oneWaySources)
+    }
+
+    /// The one-way bodies, their directions in their own space and their shapes.
+    var oneWaySources: [OneWayShapes.Source] {
+        oneWayRecords.values.compactMap { r in
+            guard let local = r.collision.oneWayDirection, simd_length_squared(local) > 0 else { return nil }
             // The entity's scale can mirror the direction; its rotation turns it.
             let mirror = SIMD3<Float>(r.scale.x < 0 ? -1 : 1, r.scale.y < 0 ? -1 : 1, r.scale.z < 0 ? -1 : 1)
-            let d = b3Body_GetRotation(r.bodyId).simd.act(simd_normalize(local * mirror))
-            for s in r.shapeIds { oneWayShapes.directions[.init(s)] = d }
+            return .init(body: r.bodyId, local: simd_normalize(local * mirror), shapes: r.shapeIds.map(OneWayShapes.Key.init))
         }
     }
 
@@ -73,7 +88,7 @@ extension B3World {
         if record.collision.oneWayDirection != nil, b3Body_IsValid(record.bodyId) {
             // Box3D's mesh and height-field contacts never call the pre-solve callback.
             if record.collision.shapes.contains(where: \.isStaticOnly) || record.collision.bakesCompound {
-                log.warning("oneWayDirection on mesh, height-field or compound shapes has no effect: Box3D does not filter their contacts.")
+                log.warning("oneWayDirection filters convex contacts only: Box3D does not filter contacts with meshes, height fields or the mesh parts of compounds.")
             }
             oneWayRecords[record.entity.id] = record
         } else {

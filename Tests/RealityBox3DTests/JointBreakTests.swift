@@ -146,4 +146,40 @@ import simd
         #expect(abs(simd_distance(bobs[2].position, [4, 3, 0]) - 1) < 0.02)
         _ = sub
     }
+
+    // Handlers that reorder the joints every step never see the broken one, so it cannot take
+    // another joint's place.
+    @Test func reorderingDuringBreaksKeepsTheRightJoints() throws {
+        let root = Entity()
+        root.components.set(B3PhysicsSimulationComponent())
+        var bobs: [Entity] = []
+        for (i, limit) in [Float(20), 1000, 1000].enumerated() {
+            let anchor = Entity()
+            anchor.position = [Float(i) * 2, 3, 0]
+            root.addChild(anchor)
+            let bob = Entity()
+            bob.position = [Float(i) * 2, 2, 0]
+            bob.components.set(B3PhysicsBodyComponent(density: 1000))
+            bob.components.set(B3CollisionComponent(shapes: [.generateSphere(radius: 0.1)]))
+            root.addChild(bob)
+            bobs.append(bob)
+            var j = B3PhysicsSphericalJoint(pin0: anchor.pins.set(named: "a\(i)"), pin1: bob.pins.set(named: "b\(i)", position: [0, 1, 0]))
+            j.breakLimit = .init(force: limit)
+            try j.addToSimulation()
+        }
+        let w = B3World(root: root, settings: root.components[B3PhysicsSimulationComponent.self]!)
+        let sub = w.subscribe(to: B3PhysicsSimulationEvents.DidSimulate.self) { _ in
+            guard var c = root.components[B3PhysicsJointsComponent.self] else { return }
+            c.joints.reverse()
+            root.components.set(c)
+        }
+        for _ in 0..<60 { w.update(entities: bobs, deltaTime: 1.0 / 60) }
+        let left = root.components[B3PhysicsJointsComponent.self]?.joints ?? []
+        #expect(left.count == 2 && left.allSatisfy { $0.breakLimit?.force == 1000 })
+        #expect(bobs[0].position.y < 0)
+        for i in 1...2 {
+            #expect(abs(simd_distance(bobs[i].position, [Float(i) * 2, 3, 0]) - 1) < 0.02, "bob \(i) at \(bobs[i].position)")
+        }
+        _ = sub
+    }
 }

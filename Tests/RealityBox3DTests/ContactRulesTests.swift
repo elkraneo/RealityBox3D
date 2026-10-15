@@ -91,6 +91,26 @@ import CBox3D
         #expect(simd_distance(predicted, real) < 1e-3, "forecast \(predicted), world \(real)")
     }
 
+    // A one-way platform turning over: the forecast turns its filter as the world does.
+    @Test func forecastTurnsOneWayPlatforms() throws {
+        let r = root()
+        let platform = body(r, .generateBox(size: [4, 0.2, 4]), at: [0, 2, 0], mode: .kinematic) { $0.oneWayDirection = [0, 1, 0] }
+        platform.components.set(B3PhysicsMotionComponent(angularVelocity: [0, 0, 1.2]))
+        let balls = [Float(-1.2), -0.4, 0.4, 1.2].map { x -> Entity in
+            body(r, .generateSphere(radius: 0.2), at: [x, 0.5, 0])
+        }
+        let w = B3World(root: r, settings: r.components[B3PhysicsSimulationComponent.self]!)
+        w.update(entities: [platform] + balls, deltaTime: 1.0 / 60)
+        for b in balls { b.b3.setVelocity(linear: [0, 7, 0], angular: .zero) }
+        let forecast = try #require(w.forecast())
+        for _ in 0..<150 { w.update(entities: [platform] + balls, deltaTime: 1.0 / 60) }
+        forecast.step(150)
+        for b in balls {
+            let predicted = try #require(forecast.transform(of: b)).translation
+            #expect(simd_distance(predicted, b.position) < 1e-3, "forecast \(predicted), world \(b.position)")
+        }
+    }
+
     /// How far a box slides on a 0.2-friction floor at 3 m/s, with its own friction 1.
     func slide(_ combine: B3MaterialCombine) -> Float {
         let r = root { $0.frictionCombine = combine }
@@ -181,7 +201,7 @@ import CBox3D
         #expect(simd_distance(balls[3].position, positions[3]) < 1e-4, "a ball out of range moved")
     }
 
-    // A mesh on a dynamic body is left out, so a blast over it has nothing to assert on.
+    // A mesh on a dynamic body stays, out of the blast's reach, so Box3D has nothing to assert on.
     @Test func blastSkipsDynamicMeshes() {
         let r = Entity()
         r.components.set(B3PhysicsSimulationComponent())
@@ -192,7 +212,7 @@ import CBox3D
         r.addChild(e)
         let w = B3World(root: r)
         w.update(entities: [e], deltaTime: 1.0 / 60)
-        #expect(b3Body_GetShapeCount(w.record(for: e)!.bodyId) == 1)
+        #expect(b3Body_GetShapeCount(w.record(for: e)!.bodyId) == 2)
         w.explode(at: .zero, radius: 3, impulsePerArea: 10)
         w.update(entities: [e], deltaTime: 1.0 / 60)
     }
@@ -325,8 +345,8 @@ import CBox3D
         w.update(entities: [level], deltaTime: 1.0 / 60)
         let id = w.record(for: level)!.bodyId
         #expect(b3Body_GetType(id) == b3_dynamicBody)
-        // Box, sphere and capsule as separate shapes; the mesh is left out on a dynamic body.
-        #expect(b3Body_GetShapeCount(id) == 3)
+        // Box, sphere, capsule and mesh as separate shapes.
+        #expect(b3Body_GetShapeCount(id) == 4)
         for _ in 0..<10 { w.update(entities: [level], deltaTime: 1.0 / 60) }
         #expect(level.position.y < 0, "the now dynamic level did not fall: \(level.position)")
         level.components[B3PhysicsBodyComponent.self]!.mode = .static

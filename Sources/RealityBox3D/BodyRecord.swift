@@ -241,6 +241,18 @@ final class BodyRecord {
         }
     }
 
+    /// Sets the body's velocities and wakes it. A disabled body has no velocity in Box3D, so it
+    /// takes them when it is enabled again.
+    private func writeVelocity(_ linear: b3Vec3, _ angular: b3Vec3) {
+        guard isEnabled else {
+            velocitiesWhileDisabled = (linear, angular)
+            return
+        }
+        b3Body_SetLinearVelocity(bodyId, linear)
+        b3Body_SetAngularVelocity(bodyId, angular)
+        b3Body_SetAwake(bodyId, true)
+    }
+
     /// Shapes are added with updateBodyMass = false, so mass is resolved here for every body type.
     /// Box3D asserts on a dirty mass even for kinematic bodies.
     private func updateMass() {
@@ -350,8 +362,7 @@ final class BodyRecord {
                 return nil
             }
             if body.mode != .static {
-                log.warning("Static mesh shape on a non-static body, left out. Box3D only collides meshes on static bodies.")
-                return nil
+                log.warning("Static mesh shape on a non-static body. Box3D only collides meshes on static bodies.")
             }
             let surfaces = Self.validSurfaces(shape.triangleMaterials, triangles: indices.count / 3)
             guard let mesh = Self.makeMesh(positions.map { r.act($0) * s + t }, indices, surfaces) else {
@@ -359,6 +370,9 @@ final class BodyRecord {
                 return nil
             }
             meshes.append(mesh)
+            // Explosions push convex shapes only; Box3D asserts on a mesh that is not skipped.
+            def.explosionScale = 0
+            defer { def.explosionScale = 1 }
             guard let surfaces else { return b3CreateMeshShape(bodyId, &def, mesh, b3Vec3(x: 1, y: 1, z: 1)) }
             var palette = surfaces.materials.map(\.b3)
             return palette.withUnsafeMutableBufferPointer { pp in
@@ -489,9 +503,7 @@ final class BodyRecord {
             }
         }
         if body.mode != .static, let motion, motion != lastMotion {
-            b3Body_SetLinearVelocity(bodyId, b3Vec3(motion.linearVelocity))
-            b3Body_SetAngularVelocity(bodyId, b3Vec3(motion.angularVelocity))
-            b3Body_SetAwake(bodyId, true)
+            writeVelocity(b3Vec3(motion.linearVelocity), b3Vec3(motion.angularVelocity))
             if body.mode == .kinematic, !moved {
                 isVelocityDriven = motion.linearVelocity != .zero || motion.angularVelocity != .zero
             }
@@ -515,9 +527,7 @@ final class BodyRecord {
 
     /// A kinematic body given a velocity directly keeps it until its entity is moved again.
     func setVelocity(linear: SIMD3<Float>, angular: SIMD3<Float>) {
-        b3Body_SetLinearVelocity(bodyId, b3Vec3(linear))
-        b3Body_SetAngularVelocity(bodyId, b3Vec3(angular))
-        b3Body_SetAwake(bodyId, true)
+        writeVelocity(b3Vec3(linear), b3Vec3(angular))
         if body.mode == .kinematic {
             isVelocityDriven = linear != .zero || angular != .zero
             kinematicTarget = nil

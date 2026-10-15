@@ -22,9 +22,8 @@ public final class B3World {
     var jointSlots: [JointSlot] = []
     var appliedJoints: B3PhysicsJointsComponent?
     var anchors: [Entity.ID: JointAnchor] = [:]
-    /// Joints Box3D found over their break limit this frame, destroyed already, removed from the
-    /// joints component at the end of the frame.
-    var brokenJoints: [(slot: Int, force: SIMD3<Float>, torque: SIMD3<Float>)] = []
+    /// Joints that broke this frame, already gone, to report at its end.
+    var brokenJoints: [B3JointEvents.Broke] = []
     var jointBreakHandlers: [UUID: (B3JointEvents.Broke) -> Void] = [:]
     /// One-way shapes, read by Box3D's pre-solve callback, and the bodies that own them.
     let oneWayShapes = OneWayShapes()

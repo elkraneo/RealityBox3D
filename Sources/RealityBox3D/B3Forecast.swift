@@ -46,11 +46,17 @@ extension B3World {
         }
         // Snapshots keep shapes' pre-solve flags but not the world's callbacks: install the same
         // rules, with a one-way table the forecast owns.
-        refreshOneWayShapes()
-        let oneWay = OneWayShapes(directions: oneWayShapes.directions)
+        let oneWay = OneWayShapes()
+        // The copy's one-way bodies, turned as they turn in the copy.
+        let sources = oneWaySources.map { source -> OneWayShapes.Source in
+            var copied = source
+            copied.body.world0 = copy.index1 &- 1
+            return copied
+        }
         Self.installContactRules(on: copy, settings, oneWay: oneWay)
         return B3Forecast(player: player, worldId: copy, bodies: bodies, kinematics: kinematics,
-                          timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount), oneWay: oneWay)
+                          timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount),
+                          oneWay: oneWay, oneWaySources: sources)
     }
 }
 
@@ -65,12 +71,14 @@ public final class B3Forecast {
     private let timeStep: Float
     private let subSteps: Int32
     public private(set) var stepCount = 0
-    /// The one-way table the copy's pre-solve callback reads.
+    /// The one-way table the copy's pre-solve callback reads, and the bodies that turn it.
     private let oneWay: OneWayShapes
+    private let oneWaySources: [OneWayShapes.Source]
 
     init(player: OpaquePointer, worldId: b3WorldId, bodies: [Entity.ID: b3BodyId], kinematics: [Kinematic],
-         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes) {
+         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes, oneWaySources: [OneWayShapes.Source]) {
         self.oneWay = oneWay
+        self.oneWaySources = oneWaySources
         self.player = player
         self.worldId = worldId
         self.bodies = bodies
@@ -92,6 +100,7 @@ public final class B3Forecast {
                     b3Body_SetAngularVelocity(k.id, b3Vec3(x: 0, y: 0, z: 0))
                 }
             }
+            if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
             b3World_Step(worldId, timeStep, subSteps)
             stepCount += 1
         }
