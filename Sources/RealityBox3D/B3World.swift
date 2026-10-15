@@ -268,21 +268,28 @@ public final class B3World {
         for h in willSimulate.values { h(.init(deltaTime: fixedDt)) }
         for r in kinematic.values { r.driveKinematic(fixedDt: fixedDt) }
         if !anchors.isEmpty { driveAnchors(fixedDt: fixedDt) }
-        // Each step judges one-way contacts by where the surfaces point at its start.
-        refreshOneWayShapes()
-        b3World_Step(id, fixedDt, Int32(settings.subStepCount))
         stepIndex += 1
-        let moves = b3World_GetBodyEvents(id)
-        for i in 0..<Int(moves.moveCount) {
-            let e = moves.moveEvents[i]
-            guard let raw = e.userData else { continue }
-            let key = Entity.ID(UInt(bitPattern: raw))
-            guard let r = records[key], r.body.mode == .dynamic || r.isVelocityDriven else { continue }
-            r.moved(to: e.transform, step: stepIndex)
-            active[key] = r
+        // Sequential impacts run Box3D's substeps as steps of their own, each after an impact
+        // pass, so a ball stops within a substep's travel of the one it strikes.
+        let parts = settings.sequentialImpacts ? max(settings.subStepCount, 1) : 1
+        let partDt = fixedDt / Float(parts)
+        for _ in 0..<parts {
+            // Each step judges one-way contacts by where the surfaces point at its start.
+            refreshOneWayShapes()
+            if settings.sequentialImpacts { resolveImpacts(dt: partDt) }
+            b3World_Step(id, partDt, Int32(parts == 1 ? settings.subStepCount : 1))
+            let moves = b3World_GetBodyEvents(id)
+            for i in 0..<Int(moves.moveCount) {
+                let e = moves.moveEvents[i]
+                guard let raw = e.userData else { continue }
+                let key = Entity.ID(UInt(bitPattern: raw))
+                guard let r = records[key], r.body.mode == .dynamic || r.isVelocityDriven else { continue }
+                r.moved(to: e.transform, step: stepIndex)
+                active[key] = r
+            }
+            collectEvents(into: &events)
+            collectJointBreaks()
         }
-        collectEvents(into: &events)
-        collectJointBreaks()
         retiredShapes.removeAll(keepingCapacity: true)
         for h in didSimulate.values { h(.init(deltaTime: fixedDt)) }
     }

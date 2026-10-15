@@ -181,6 +181,10 @@ public struct B3PhysicsSimulationComponent: Component, Equatable, Sendable {
     /// Box3D extension: how two touching materials' restitutions combine. Box3D's default is the
     /// larger one.
     public var restitutionCombine: B3MaterialCombine = .maximum
+    /// Box3D extension: resolves sphere impacts pair by pair before each step, so momentum passes
+    /// along a row of touching balls, as in a Newton's cradle or a pool break, instead of being
+    /// shared among them. Costs a query per awake sphere per step.
+    public var sequentialImpacts: Bool = false
 
     public init() {}
 

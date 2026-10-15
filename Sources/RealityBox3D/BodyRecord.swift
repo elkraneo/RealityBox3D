@@ -559,7 +559,8 @@ final class BodyRecord {
 
     /// Called for each Box3D move event.
     func moved(to transform: b3Transform, step: Int) {
-        previous = current
+        // Several Box3D steps can make one fixed step: interpolate from where it began.
+        if lastMovedStep != step { previous = current }
         current = transform
         lastMovedStep = step
     }

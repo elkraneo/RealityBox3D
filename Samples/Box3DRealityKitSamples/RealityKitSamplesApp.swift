@@ -27,6 +27,7 @@ struct RealityKitSamplesApp: App {
 private enum Sample: String, CaseIterable, Identifiable {
     case physicsBodies = "Physics Bodies"
     case dice = "Dice"
+    case newtonsCradle = "Newton's Cradle"
 
     var id: Self { self }
 
@@ -43,6 +44,11 @@ private enum Sample: String, CaseIterable, Identifiable {
             "The roll is forecast from an exact copy of the Box3D world, restored from a recording snapshot; Max score toss turns each die by a symmetry to land on its highest face, without adjusting the roll.",
             "Invisible walls keep the dice on the table; the pointer holds a die with a spring, and releases it with its velocity.",
         ]
+        case .newtonsCradle: [
+            "B3PhysicsRevoluteJoint on Apple's pins, sizes, masses and slow motion, in a root whose units are centimeters.",
+            "sequentialImpacts resolves the impacts pair by pair before each step: one ball in sends one out, as in a real cradle. Box3D's solver alone, like RealityKit's, shares the momentum along the row.",
+            "Lift raises one to three balls to 30° and releases them; Push ball is Apple's impulse.",
+        ]
         }
     }
 
@@ -55,6 +61,9 @@ private enum Sample: String, CaseIterable, Identifiable {
         case .dice:
             ("Simulating dice rolls as a component for your game",
              URL(string: "https://developer.apple.com/documentation/tabletopkit/simulating-dice-rolls-as-a-component-for-your-game")!)
+        case .newtonsCradle:
+            ("Simulating physics joints in your RealityKit app",
+             URL(string: "https://developer.apple.com/documentation/realitykit/simulating-physics-joints-in-your-realitykit-app")!)
         }
     }
 }
@@ -77,6 +86,7 @@ private struct SamplesView: View {
                     switch selection {
                     case .physicsBodies: PhysicsBodiesView()
                     case .dice: DiceView()
+                    case .newtonsCradle: NewtonsCradleView()
                     }
                     Divider()
                     SampleReference(sample: selection)

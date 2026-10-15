@@ -85,6 +85,7 @@ if let forecast = world.forecast() {
 | — | `B3CollisionComponent.oneWayDirection`: one-way platforms |
 | — | `frictionCombine`, `restitutionCombine`: how touching materials mix, PhysX's average included |
 | — | `world.explode(at:radius:impulsePerArea:)` |
+| — | `sequentialImpacts`: sphere impacts resolved pair by pair, for Newton's cradles and pool breaks |
 | — | `B3ShapeResource.material`, per-triangle `B3TriangleMaterials`, `bakesCompound` for static level geometry |
 | — | `entity.b3.contacts`, `overlappingEntities`, `applyWind(_:)` |
 
@@ -118,6 +119,10 @@ macOS apps built on the public API, in `Samples/`:
     with Apple's seven dice models, each simulated as its exact polyhedron. The roll is forecast with `B3World.forecast()`, so the score
     shows while the dice tumble, and "Max score toss" turns each die's model by a symmetry so its
     highest face lands on top.
+  - [Simulating physics joints in your RealityKit app](https://developer.apple.com/documentation/realitykit/simulating-physics-joints-in-your-realitykit-app),
+    Apple's Newton's cradle on revolute joints. Box3D's solver, like RealityKit's, shares a striking
+    ball's momentum along the row; with `sequentialImpacts`, impacts are resolved pair by pair
+    before each step, so one ball in sends one ball out, two send two, and the middle balls stay still.
 
 Both mirror RealitySDFPhysics's `SDFDemos` and `SDFRealityKitSamples`, so the same scenes can be
 compared across RealityKit's physics, RealitySDFPhysics and Box3D.
@@ -201,6 +206,9 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
   filters only fast bodies' continuous-collision hits; their regular contacts always collide.
 - Forecasts do not break joints, and explosions push spheres, capsules and hulls, not meshes.
 - A broken joint reports its load at the end of the step it broke in, not the peak that broke it.
+- `sequentialImpacts` covers spheres striking spheres, capsules and hulls, and runs Box3D's substeps
+  as steps of their own. Impacts slower than the restitution threshold, 1 m/s by default, are left
+  to Box3D: lower it for small, slow balls modeled in meters.
 - The apps run on macOS. The library builds for iOS and visionOS but has not run on a device.
 
 ## License

@@ -54,9 +54,14 @@ extension B3World {
             return copied
         }
         Self.installContactRules(on: copy, settings, oneWay: oneWay)
+        // The copy steps as the world does, sequential impacts included, on its own shapes.
+        let impacts = settings.sequentialImpacts ? B3Forecast.Impacts(
+            shapes: records.values.flatMap(\.shapeIds).map { var s = $0; s.world0 = copy.index1 &- 1; return s },
+            threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
+            slop: 0.005 * b3GetLengthUnitsPerMeter()) : nil
         return B3Forecast(player: player, worldId: copy, bodies: bodies, kinematics: kinematics,
                           timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount),
-                          oneWay: oneWay, oneWaySources: sources)
+                          oneWay: oneWay, oneWaySources: sources, impacts: impacts)
     }
 }
 
@@ -74,9 +79,12 @@ public final class B3Forecast {
     /// The one-way table the copy's pre-solve callback reads, and the bodies that turn it.
     private let oneWay: OneWayShapes
     private let oneWaySources: [OneWayShapes.Source]
+    struct Impacts { let shapes: [b3ShapeId]; let threshold: Float; let combine: B3MaterialCombine; let slop: Float }
+    private let impacts: Impacts?
 
     init(player: OpaquePointer, worldId: b3WorldId, bodies: [Entity.ID: b3BodyId], kinematics: [Kinematic],
-         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes, oneWaySources: [OneWayShapes.Source]) {
+         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes, oneWaySources: [OneWayShapes.Source], impacts: Impacts?) {
+        self.impacts = impacts
         self.oneWay = oneWay
         self.oneWaySources = oneWaySources
         self.player = player
@@ -100,8 +108,18 @@ public final class B3Forecast {
                     b3Body_SetAngularVelocity(k.id, b3Vec3(x: 0, y: 0, z: 0))
                 }
             }
-            if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
-            b3World_Step(worldId, timeStep, subSteps)
+            if let impacts {
+                let parts = max(subSteps, 1), dt = timeStep / Float(parts)
+                for _ in 0..<parts {
+                    if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
+                    SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes), dt: dt,
+                                              threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop)
+                    b3World_Step(worldId, dt, 1)
+                }
+            } else {
+                if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
+                b3World_Step(worldId, timeStep, subSteps)
+            }
             stepCount += 1
         }
     }

@@ -158,4 +158,21 @@ func renderSamples(to output: String) async throws {
     while dice.rolled == nil && n < 1200 { frames(1); n += 1 }
     try await render(dice.content, camera: dice.camera, "dice-rolled.png")
     print("Dice: predicted \(dice.predicted?.map(\.value) ?? []), rolled \(dice.rolled?.map(\.value) ?? []) after \(n) frames")
+
+    // Newton's cradle: two balls lifted, then the two at the far end out at the top of their swing
+    let cradle = NewtonsCradleScene()
+    let cradleWorld = B3World(root: cradle.root, settings: cradle.root.components[B3PhysicsSimulationComponent.self]!)
+    cradle.lift(2)
+    cradleWorld.update(entities: cradle.bodies, deltaTime: 1.0 / 60)
+    try await render(cradle.content, camera: cradle.camera, "newtons-cradle-lifted.png")
+    var frame = 0, peak: Float = 0
+    while frame < 240 {
+        cradleWorld.update(entities: cradle.bodies, deltaTime: 1.0 / 60)
+        frame += 1
+        let a = cradle.angle(of: 4)
+        if a < peak - 0.05 { break } // turning back
+        peak = max(peak, a)
+    }
+    try await render(cradle.content, camera: cradle.camera, "newtons-cradle-out.png")
+    print("Newton's cradle: lift 2, angles \((0..<5).map { String(format: "%.1f", cradle.angle(of: $0)) }) at frame \(frame)")
 }
