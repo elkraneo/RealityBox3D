@@ -74,6 +74,38 @@ import Box3DRealityKitSampleScenes
         #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay: \(peak)")
     }
 
+    // A ball dragged to 30° by hand and let go swings into the row like a lifted one.
+    @Test func draggedBallStrikesLikeALiftedOne() {
+        let scene = NewtonsCradleScene()
+        let world = B3World(root: scene.root, settings: scene.root.components[B3PhysicsSimulationComponent.self]!)
+        world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
+        let ball = scene.balls[0]
+        #expect(scene.grab(ball, at: ball.position(relativeTo: scene.root)))
+        // The pivot in world space, and the point 30° out toward -x, moved there over a second.
+        let pivot = scene.root.children[0].convert(position: [ball.position.x, 30, 0], to: nil)
+        let length = simd_distance(pivot, ball.position(relativeTo: nil))
+        let a: Float = -30 * .pi / 180
+        let start = ball.position(relativeTo: nil), end = pivot + length * SIMD3(sin(a), -cos(a), 0)
+        for i in 1...60 {
+            scene.drag(toWorld: start + (end - start) * Float(i) / 60)
+            world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
+        }
+        for _ in 0..<60 { world.update(entities: scene.bodies, deltaTime: 1.0 / 60) }
+        #expect(abs(scene.angle(of: 0) + 30) < 2, "held at \(scene.angle(of: 0))°")
+        scene.endDrag()
+        #expect(scene.root.components[B3PhysicsJointsComponent.self]!.joints.count == 5)
+        var peak = [Float](repeating: -90, count: 5), struck = false
+        for frame in 0..<150 {
+            world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
+            if !struck, scene.angle(of: 0) > -2 { struck = true; _ = frame }
+            guard struck else { continue }
+            for i in 1..<5 { peak[i] = max(peak[i], scene.angle(of: i)) }
+            if scene.angle(of: 4) < peak[4] - 0.5 { break }
+        }
+        #expect(peak[4] > 26, "the last ball should swing out: \(peak)")
+        #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay: \(peak)")
+    }
+
     // A free row of five touching balls in zero gravity: the first one's velocity ends in the last.
     @Test(arguments: [false, true]) func freeRowPassesVelocity(sequential: Bool) {
         let root = Entity()

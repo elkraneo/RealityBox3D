@@ -47,7 +47,7 @@ private enum Sample: String, CaseIterable, Identifiable {
         case .newtonsCradle: [
             "B3PhysicsRevoluteJoint on Apple's pins, sizes, masses and slow motion, in a root whose units are centimeters.",
             "sequentialImpacts resolves the impacts pair by pair before each step: one ball in sends one out, as in a real cradle. Box3D's solver alone, like RealityKit's, shares the momentum along the row.",
-            "Lift raises one to three balls to 30° and releases them; Push ball is Apple's impulse.",
+            "Lift raises one to three balls to 30° and releases them; Push ball is Apple's impulse. Drag a ball by hand: a motor joint with a force-limited spring pulls it to the pointer.",
         ]
         }
     }

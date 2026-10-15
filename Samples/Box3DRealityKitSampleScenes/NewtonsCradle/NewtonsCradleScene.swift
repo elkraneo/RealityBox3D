@@ -13,7 +13,10 @@
 //   impacts resolved pair by pair before each step, one ball in sends one ball out, two send two,
 //   and the middle balls stay still, as in a real cradle.
 // - "Lift" raises the first one, two or three balls to 30° and lets them go.
+// - A ball can be dragged by hand: a motor joint with a force-limited spring pulls it toward the
+//   pointer, Box3D's way of grabbing a body, so a dragged ball still strikes the others.
 
+import CoreGraphics
 import Foundation
 import RealityBox3D
 import RealityKit
@@ -130,6 +133,66 @@ package final class NewtonsCradleScene {
         let ballPin = ball.pins.set(named: "ball_hinge", position: attachment.position(relativeTo: ball), orientation: hinge)
         try? B3PhysicsRevoluteJoint(pin0: attachmentPin, pin1: ballPin).addToSimulation()
         return (attachment, ball)
+    }
+
+    // MARK: Dragging
+
+    /// The invisible anchor the pointer moves, and the joint pulling the grabbed ball to it
+    private var grab: (anchor: Entity, joint: B3PhysicsMotorJoint)?
+    /// The anchor of a grab, for tests
+    package var grabAnchor: Entity? { grab?.anchor }
+
+    /// Grabs the ball under a point of the view. True if there is one.
+    package func beginDrag(at point: CGPoint, in size: CGSize) -> Bool {
+        guard grab == nil, let world = RealityBox3D.world(for: root) else { return false }
+        let ray = camera.ray(through: point, in: size)
+        let origin = root.convert(position: ray.origin, from: nil)
+        let direction = root.convert(direction: ray.direction, from: nil)
+        guard let hit = world.raycast(origin: origin, direction: direction, length: 10_000, query: .nearest).first,
+              balls.contains(where: { $0 === hit.entity }) else { return false }
+        return grab(hit.entity, at: hit.position)
+    }
+
+    /// Grabs a ball at a point of it, in the simulation root's space.
+    package func grab(_ ball: Entity, at point: SIMD3<Float>) -> Bool {
+        guard grab == nil else { return false }
+        let anchor = Entity()
+        pendulums.addChild(anchor)
+        anchor.setPosition(root.convert(position: point, to: nil), relativeTo: nil)
+        let hit = (position: point, entity: ball)
+        // A critically damped 5 Hz spring, capped at 50 times the ball's weight.
+        let joint = B3PhysicsMotorJoint(
+            pin0: anchor.pins.set(named: "grab", position: .zero),
+            pin1: ball.pins.set(named: "grab", position: ball.convert(position: hit.position, from: root)),
+            linearSpring: B3JointSpring(hertz: 5, dampingRatio: 1), maxSpringForce: 50 * Settings.ballMass * 981,
+            checksForInternalCollisions: false)
+        guard (try? joint.addToSimulation()) != nil else { anchor.removeFromParent(); return false }
+        grab = (anchor, joint)
+        return true
+    }
+
+    /// Moves the grab to the point of the cradle's plane under a point of the view.
+    package func drag(to point: CGPoint, in size: CGSize) {
+        guard let grab else { return }
+        let ray = camera.ray(through: point, in: size)
+        // The pendulums swing in the plane z = 0 of the content.
+        guard abs(ray.direction.z) > 1e-4 else { return }
+        let t = -ray.origin.z / ray.direction.z
+        guard t > 0 else { return }
+        grab.anchor.setPosition(ray.origin + ray.direction * t, relativeTo: nil)
+    }
+
+    /// Moves the grab to a world space point.
+    package func drag(toWorld point: SIMD3<Float>) { grab?.anchor.setPosition(point, relativeTo: nil) }
+
+    package func endDrag() {
+        guard let grab else { return }
+        if var joints = root.components[B3PhysicsJointsComponent.self] {
+            joints.joints.removeAll { $0 is B3PhysicsMotorJoint } // the grab is the only motor joint
+            root.components.set(joints)
+        }
+        grab.anchor.removeFromParent()
+        self.grab = nil
     }
 
     /// Apple's material: no friction, full restitution
