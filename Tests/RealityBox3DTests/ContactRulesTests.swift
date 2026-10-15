@@ -401,6 +401,30 @@ import CBox3D
         #expect(b3Body_GetShapeCount(w.record(for: level)!.bodyId) == 1)
     }
 
+    // A one-way body keeps its shapes separate, and a box resting on its sphere stays up.
+    @Test func oneWayBodyDoesNotBake() {
+        let r = Entity()
+        var settings = B3PhysicsSimulationComponent()
+        settings.interpolatesPoses = false
+        r.components.set(settings)
+        let level = Entity()
+        level.components.set(B3PhysicsBodyComponent(density: 1000, mode: .static))
+        var c = B3CollisionComponent(shapes: [.generateSphere(radius: 1), B3ShapeResource.generateSphere(radius: 1).offsetBy(translation: [4, 0, 0])])
+        c.bakesCompound = true
+        c.oneWayDirection = [0, 1, 0]
+        level.components.set(c)
+        r.addChild(level)
+        let box = Entity()
+        box.position = [0, 2, 0]
+        box.components.set(B3PhysicsBodyComponent(density: 1000))
+        box.components.set(B3CollisionComponent(shapes: [.generateBox(size: [0.2, 0.2, 0.2])]))
+        r.addChild(box)
+        let w = B3World(root: r, settings: settings)
+        for _ in 0..<120 { w.update(entities: [level, box], deltaTime: 1.0 / 60) }
+        #expect(b3Body_GetShapeCount(w.record(for: level)!.bodyId) == 2)
+        #expect(box.position.y > 1, "the box fell through: \(box.position)")
+    }
+
     @Test func compoundOnADynamicBodyStaysSeparate() {
         let r = Entity()
         r.components.set(B3PhysicsSimulationComponent())

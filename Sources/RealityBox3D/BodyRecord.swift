@@ -206,7 +206,11 @@ final class BodyRecord {
         def.updateBodyMass = false
         var shapes = collision.shapes
         if collision.bakesCompound {
-            if collision.mode == .trigger {
+            if collision.oneWayDirection != nil {
+                // Box3D's compound children report one-way contacts with a pair order that does not
+                // match the normal, so one-way bodies keep their shapes separate.
+                log.warning("bakesCompound with oneWayDirection: the shapes stay separate so one-way filtering works.")
+            } else if collision.mode == .trigger {
                 log.warning("bakesCompound on a trigger. Box3D compounds cannot be sensors; the shapes stay separate.")
             } else if body.mode == .static {
                 shapes = bakeCompound(def: &def)
@@ -478,6 +482,8 @@ final class BodyRecord {
 
     func currentMotion() -> B3PhysicsMotionComponent? {
         guard b3Body_IsValid(bodyId) else { return nil }
+        // A disabled body's velocities are the ones it keeps for re-enabling; Box3D reads zero.
+        if let v = velocitiesWhileDisabled { return .init(linearVelocity: v.linear.simd, angularVelocity: v.angular.simd) }
         return .init(linearVelocity: b3Body_GetLinearVelocity(bodyId).simd,
                      angularVelocity: b3Body_GetAngularVelocity(bodyId).simd)
     }

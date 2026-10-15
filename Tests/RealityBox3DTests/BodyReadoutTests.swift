@@ -168,6 +168,26 @@ extension BodyReadoutTests {
     }
 }
 
+extension BodyReadoutTests {
+    // setVelocity while disabled publishes that velocity, and a later edit to zero holds.
+    @Test func setVelocityWhileDisabledPublishes() {
+        let r = root(gravity: .zero)
+        let ball = body(r, .generateSphere(radius: 0.2), at: .zero)
+        ball.components.set(B3PhysicsMotionComponent())
+        let w = world(r)
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        ball.isEnabled = false
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        ball.b3.setVelocity(linear: [3, 0, 0], angular: .zero)
+        #expect(ball.components[B3PhysicsMotionComponent.self]?.linearVelocity == [3, 0, 0])
+        ball.components.set(B3PhysicsMotionComponent())
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        ball.isEnabled = true
+        w.update(entities: [ball], deltaTime: 0)
+        #expect(simd_length(ball.b3.linearVelocity ?? [9, 9, 9]) < 1e-5, "velocity \(String(describing: ball.b3.linearVelocity))")
+    }
+}
+
 /// Disabled entities in the system's incremental path.
 @MainActor
 @Suite(.serialized) struct DisabledEntitySystemTests {

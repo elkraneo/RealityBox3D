@@ -220,4 +220,27 @@ import simd
         #expect(bob.position.y > 1.9, "bob at \(bob.position)")
         _ = sub
     }
+
+    // A handler removes the weak duplicate; its constraint, still built this step and sharing the
+    // load, breaks: the strong one stays.
+    @Test func removedDuplicateBreakingKeepsTheOther() throws {
+        let (root, bob, w) = try pendulum(.init(force: 5))
+        var c = try #require(root.components[B3PhysicsJointsComponent.self])
+        var strong = try #require(c.joints.first as? B3PhysicsSphericalJoint)
+        strong.breakLimit = .init(force: 1000)
+        c.joints.append(strong)
+        root.components.set(c)
+        // Both are built at the frame's start; the handler then removes the weak one before the
+        // step in which it breaks.
+        let sub = w.subscribe(to: B3PhysicsSimulationEvents.WillSimulate.self) { _ in
+            guard var c = root.components[B3PhysicsJointsComponent.self] else { return }
+            c.joints.removeAll { $0.breakLimit?.force == 5 }
+            root.components.set(c)
+        }
+        frames(w, bob, 60)
+        let left = root.components[B3PhysicsJointsComponent.self]?.joints ?? []
+        #expect(left.count == 1 && left.first?.breakLimit?.force == 1000, "left \(left.map { $0.breakLimit as Any })")
+        #expect(bob.position.y > 1.9, "bob at \(bob.position)")
+        _ = sub
+    }
 }
