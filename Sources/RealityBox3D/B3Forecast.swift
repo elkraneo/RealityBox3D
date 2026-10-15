@@ -44,8 +44,13 @@ extension B3World {
             let target = anchor.target.map { b3Transform(translation: $0.position, rotation: $0.orientation) }
             kinematics.append(.init(id: id, target: target, isVelocityDriven: false))
         }
+        // Snapshots keep shapes' pre-solve flags but not the world's callbacks: install the same
+        // rules, with a one-way table the forecast owns.
+        refreshOneWayShapes()
+        let oneWay = OneWayShapes(directions: oneWayShapes.directions)
+        Self.installContactRules(on: copy, settings, oneWay: oneWay)
         return B3Forecast(player: player, worldId: copy, bodies: bodies, kinematics: kinematics,
-                          timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount))
+                          timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount), oneWay: oneWay)
     }
 }
 
@@ -60,9 +65,12 @@ public final class B3Forecast {
     private let timeStep: Float
     private let subSteps: Int32
     public private(set) var stepCount = 0
+    /// The one-way table the copy's pre-solve callback reads.
+    private let oneWay: OneWayShapes
 
     init(player: OpaquePointer, worldId: b3WorldId, bodies: [Entity.ID: b3BodyId], kinematics: [Kinematic],
-         timeStep: Float, subSteps: Int32) {
+         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes) {
+        self.oneWay = oneWay
         self.player = player
         self.worldId = worldId
         self.bodies = bodies

@@ -73,10 +73,12 @@ import simd
         root.components.set(component)
         var broke = 0
         let sub = w.subscribe(to: B3JointEvents.Broke.self) { _ in broke += 1 }
+        // Box3D's hanging load is steady here, so the lowered limit is checked against it first
+        // by the same joint, updated in place.
         frames(w, bob, 1)
         #expect(built.count == 1)
-        frames(w, bob, 10)
         #expect(broke == 1)
+        #expect(w.jointIds.isEmpty)
         _ = sub
     }
 
@@ -97,5 +99,51 @@ import simd
         #expect(root.components[B3PhysicsJointsComponent.self]?.joints.count == 1)
         #expect(bob.position.y < 0)
         #expect(abs(simd_distance(second.position, [1, 3, 0]) - 1) < 0.02, "second at \(second.position)")
+    }
+
+    // A handler that edits the breaking joint during the frame does not bring it back.
+    @Test func editedWhileBreakingStaysBroken() throws {
+        let (root, bob, w) = try pendulum(.init(force: 20))
+        let sub = w.subscribe(to: B3PhysicsSimulationEvents.DidSimulate.self) { _ in
+            guard var c = root.components[B3PhysicsJointsComponent.self], var j = c.joints.first as? B3PhysicsSphericalJoint else { return }
+            j.friction = (j.friction ?? 0) + 0.01
+            c.joints[0] = j
+            root.components.set(c)
+        }
+        frames(w, bob, 60)
+        #expect(root.components[B3PhysicsJointsComponent.self]?.joints.isEmpty == true)
+        #expect(w.jointIds.isEmpty)
+        #expect(bob.position.y < 0)
+        _ = sub
+    }
+
+    // Two joints breaking in the same step both go, and a third, stronger one stays.
+    @Test func severalBreakAtOnce() throws {
+        let root = Entity()
+        root.components.set(B3PhysicsSimulationComponent())
+        var bobs: [Entity] = []
+        for (i, limit) in [Float(20), 20, 1000].enumerated() {
+            let anchor = Entity()
+            anchor.position = [Float(i) * 2, 3, 0]
+            root.addChild(anchor)
+            let bob = Entity()
+            bob.position = [Float(i) * 2, 2, 0]
+            bob.components.set(B3PhysicsBodyComponent(density: 1000))
+            bob.components.set(B3CollisionComponent(shapes: [.generateSphere(radius: 0.1)]))
+            root.addChild(bob)
+            bobs.append(bob)
+            var j = B3PhysicsSphericalJoint(pin0: anchor.pins.set(named: "a\(i)"), pin1: bob.pins.set(named: "b\(i)", position: [0, 1, 0]))
+            j.breakLimit = .init(force: limit)
+            try j.addToSimulation()
+        }
+        let w = B3World(root: root, settings: root.components[B3PhysicsSimulationComponent.self]!)
+        var broke = 0
+        let sub = w.subscribe(to: B3JointEvents.Broke.self) { _ in broke += 1 }
+        for _ in 0..<60 { w.update(entities: bobs, deltaTime: 1.0 / 60) }
+        #expect(broke == 2)
+        let left = root.components[B3PhysicsJointsComponent.self]?.joints ?? []
+        #expect(left.count == 1 && left.first?.breakLimit?.force == 1000)
+        #expect(abs(simd_distance(bobs[2].position, [4, 3, 0]) - 1) < 0.02)
+        _ = sub
     }
 }

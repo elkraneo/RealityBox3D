@@ -40,9 +40,10 @@ public enum B3PhysicsSimulationEvents {
 
 /// Box3D extension: joint events.
 public enum B3JointEvents {
-    /// A joint broke: its load passed its `breakLimit`. The world has destroyed it and removed it
-    /// from the root's `B3PhysicsJointsComponent`. Force and torque are those that broke it, in the
-    /// simulation root's space.
+    /// A joint broke: its load passed its `breakLimit` during a step. The world has destroyed it
+    /// and removed it from the root's `B3PhysicsJointsComponent`. Force and torque are the joint's
+    /// at the end of that step, in the simulation root's space; a brief peak that broke it can be
+    /// higher.
     public struct Broke {
         public let joint: any B3PhysicsJoint
         public let force: SIMD3<Float>

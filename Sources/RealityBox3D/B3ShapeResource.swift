@@ -137,6 +137,16 @@ extension MeshResource {
     }
 }
 
+extension B3ShapeResource {
+    /// Static meshes and height fields: Box3D collides them on static bodies only.
+    var isStaticOnly: Bool {
+        switch geometry {
+        case .staticMesh, .heightField: true
+        default: false
+        }
+    }
+}
+
 /// Box3D extension: the surfaces of a static mesh's triangles. `indices` holds one entry per
 /// triangle, an index into `materials`, which holds at most 256.
 public struct B3TriangleMaterials: Equatable, Sendable {

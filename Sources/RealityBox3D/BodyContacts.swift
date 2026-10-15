@@ -8,7 +8,8 @@ public struct B3Contact {
     public let entity: Entity
     /// The contact points, in the simulation root's space.
     public let points: [SIMD3<Float>]
-    /// Points from the asking entity toward the one touched.
+    /// Points from the asking entity toward the one touched; for a mesh touched in several places,
+    /// the average of their normals.
     public let normal: SIMD3<Float>
     /// The force along the normal, summed over the points: Box3D's impulse in its last substep
     /// over that substep's length. Newtons when the simulation root is in meters.
@@ -37,7 +38,8 @@ extension B3BodyProxy {
             guard let other = world.entity(for: isA ? d.shapeIdB : d.shapeIdA) else { continue }
             let centerA = b3Body_GetWorldCenter(b3Shape_GetBody(d.shapeIdA)).simd
             var points: [SIMD3<Float>] = [], normal = SIMD3<Float>.zero, impulse: Float = 0
-            for m in UnsafeBufferPointer(start: manifolds, count: Int(d.manifoldCount)) {
+            let parts = UnsafeBufferPointer(start: manifolds, count: Int(d.manifoldCount))
+            for m in parts {
                 normal += m.normal.simd
                 withUnsafeBytes(of: m.points) { raw in
                     for p in raw.bindMemory(to: b3ManifoldPoint.self).prefix(Int(m.pointCount)) {
@@ -46,8 +48,9 @@ extension B3BodyProxy {
                     }
                 }
             }
-            guard simd_length_squared(normal) > 0 else { continue }
-            normal = simd_normalize(normal) * (isA ? 1 : -1)
+            // Opposite faces of one mesh can cancel out; then the first manifold speaks for the pair.
+            normal = simd_length_squared(normal) > 1e-12 ? simd_normalize(normal) : parts[0].normal.simd
+            normal *= isA ? 1 : -1
             out.append(B3Contact(entity: other, points: points, normal: normal, normalForce: impulse / substep))
         }
         return out

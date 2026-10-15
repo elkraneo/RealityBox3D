@@ -27,14 +27,16 @@ extension B3World {
         var applied = appliedJoints?.joints ?? []
         var component = root?.components[B3PhysicsJointsComponent.self]
         var events: [B3JointEvents.Broke] = []
+        // A handler may have edited the component during the frame. While it holds as many joints
+        // as were applied, joints keep their places, so a broken one goes by its index even if
+        // its parameters changed; otherwise it goes by value.
+        let sameLayout = component?.joints.count == applied.count
         for b in broken where b.slot < applied.count {
             let joint = applied.remove(at: b.slot)
             jointSlots.remove(at: b.slot)
-            // The component matches the applied joints unless a handler edited it this frame.
             if let c = component {
-                let index = b.slot < c.joints.count && c.joints[b.slot].isEqual(to: joint)
-                    ? b.slot : c.joints.firstIndex { $0.isEqual(to: joint) }
-                if let index { component?.joints.remove(at: index) }
+                let index = sameLayout ? b.slot : c.joints.firstIndex { $0.isEqual(to: joint) }
+                if let index, index < c.joints.count { component?.joints.remove(at: index) }
             }
             events.append(B3JointEvents.Broke(joint: joint, force: b.force, torque: b.torque))
         }

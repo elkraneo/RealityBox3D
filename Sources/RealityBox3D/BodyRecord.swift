@@ -125,6 +125,14 @@ final class BodyRecord {
         let old = body
         body = new
 
+        // Compounds, height fields and meshes belong to static bodies: Box3D refuses to change the
+        // type of a body holding the first two, locking its world, and cannot push meshes. They go
+        // before the type changes and are rebuilt for the new one.
+        let rebuildsForMode = new.mode != old.mode && (!compounds.isEmpty || !heightFields.isEmpty || !meshes.isEmpty
+            || newCollision.bakesCompound || newCollision.shapes.contains(where: \.isStaticOnly))
+        let oldShapeIds = shapeIds
+        if rebuildsForMode { destroyShapes() }
+
         if new.mode != old.mode {
             b3Body_SetType(bodyId, new.mode.b3)
             // A body becoming kinematic keeps a velocity its motion component gives it.
@@ -147,18 +155,15 @@ final class BodyRecord {
             // Shapes with their own surfaces keep them: rebuild rather than overwrite them all.
             || (new.material != old.material && newCollision.shapes.contains { $0.material != nil || $0.triangleMaterials != nil })
             || newCollision.bakesCompound != collision.bakesCompound
+            || rebuildsForMode
             || (new.material != old.material && newCollision.bakesCompound) // a compound's materials are baked
         let oldCollision = collision
         collision = newCollision
         scale = newScale
 
         if geometryChanged {
-            let old = shapeIds
-            defer { world.oneWayShapesChanged(self, removing: old) }
-            world.retire(shapeIds, of: entity)
-            for s in shapeIds where b3Shape_IsValid(s) { b3DestroyShape(s, false) }
-            shapeIds.removeAll()
-            freeMeshes()
+            defer { world.oneWayShapesChanged(self, removing: oldShapeIds) }
+            destroyShapes()
             createShapes()
             updateMass()
         } else {
@@ -201,7 +206,9 @@ final class BodyRecord {
         def.updateBodyMass = false
         var shapes = collision.shapes
         if collision.bakesCompound {
-            if body.mode == .static {
+            if collision.mode == .trigger {
+                log.warning("bakesCompound on a trigger. Box3D compounds cannot be sensors; the shapes stay separate.")
+            } else if body.mode == .static {
                 shapes = bakeCompound(def: &def)
             } else {
                 log.warning("bakesCompound on a non-static body. Box3D bakes compounds for static bodies only.")
@@ -216,10 +223,22 @@ final class BodyRecord {
     /// Whether the body takes part in the simulation: off while its entity is disabled, as
     /// RealityKit drops disabled entities from physics. It keeps its state while off.
     private(set) var isEnabled = true
+    /// Velocities at the moment the body was disabled: Box3D drops them, the body resumes with them.
+    private var velocitiesWhileDisabled: (linear: b3Vec3, angular: b3Vec3)?
     func setEnabled(_ enabled: Bool) {
         guard enabled != isEnabled else { return }
         isEnabled = enabled
-        if enabled { b3Body_Enable(bodyId) } else { b3Body_Disable(bodyId) }
+        if enabled {
+            b3Body_Enable(bodyId)
+            if let v = velocitiesWhileDisabled, body.mode != .static {
+                b3Body_SetLinearVelocity(bodyId, v.linear)
+                b3Body_SetAngularVelocity(bodyId, v.angular)
+            }
+            velocitiesWhileDisabled = nil
+        } else {
+            velocitiesWhileDisabled = (b3Body_GetLinearVelocity(bodyId), b3Body_GetAngularVelocity(bodyId))
+            b3Body_Disable(bodyId)
+        }
     }
 
     /// Shapes are added with updateBodyMass = false, so mass is resolved here for every body type.
@@ -331,7 +350,8 @@ final class BodyRecord {
                 return nil
             }
             if body.mode != .static {
-                log.warning("Static mesh shape on a non-static body. Box3D only collides meshes on static bodies.")
+                log.warning("Static mesh shape on a non-static body, left out. Box3D only collides meshes on static bodies.")
+                return nil
             }
             let surfaces = Self.validSurfaces(shape.triangleMaterials, triangles: indices.count / 3)
             guard let mesh = Self.makeMesh(positions.map { r.act($0) * s + t }, indices, surfaces) else {
@@ -379,6 +399,14 @@ final class BodyRecord {
                 }
             }
         }
+    }
+
+    /// Destroys the body's shapes and the geometry they hold. Idempotent.
+    private func destroyShapes() {
+        world.retire(shapeIds, of: entity)
+        for s in shapeIds where b3Shape_IsValid(s) { b3DestroyShape(s, false) }
+        shapeIds.removeAll()
+        freeMeshes()
     }
 
     private func freeMeshes() {
@@ -657,7 +685,11 @@ extension BodyRecord {
                       positions.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else { rest.append(shape); continue }
                 let surfaces = Self.validSurfaces(shape.triangleMaterials, triangles: indices.count / 3)
                 guard let mesh = Self.makeMesh(positions.map { r.act($0) * s + t }, indices, surfaces) else { rest.append(shape); continue }
-                meshParts.append((mesh, surfaces?.materials.map(\.b3) ?? [material]))
+                // Box3D counts a mesh's materials from the triangles it kept; the palette must match.
+                let count = max(Int(mesh.pointee.materialCount), 1)
+                var palette = Array((surfaces?.materials.map(\.b3) ?? [material]).prefix(count))
+                while palette.count < count { palette.append(material) }
+                meshParts.append((mesh, palette))
             default:
                 rest.append(shape)
             }

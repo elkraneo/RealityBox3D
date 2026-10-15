@@ -22,7 +22,11 @@ public enum B3MaterialCombine: Equatable, Sendable {
 /// The one-way shapes of a world and the direction each pushes along, in the root's space.
 /// Written on the main actor between steps, read by Box3D's solver threads during a step.
 final class OneWayShapes: @unchecked Sendable {
-    var directions: [b3ShapeId: SIMD3<Float>] = [:]
+    /// Keyed by shape index and generation, not world: a forecast's copy has the same shapes.
+    struct Key: Hashable { let index: Int32, generation: UInt16 }
+    var directions: [Key: SIMD3<Float>] = [:]
+
+    init(directions: [Key: SIMD3<Float>] = [:]) { self.directions = directions }
 
     /// A contact on a one-way shape counts only when it pushes the other body along the shape's
     /// direction, within about 45°.
@@ -31,16 +35,23 @@ final class OneWayShapes: @unchecked Sendable {
         let shapes = Unmanaged<OneWayShapes>.fromOpaque(context).takeUnretainedValue()
         // The normal points from shape A to shape B: A pushes B along it, B pushes A against it.
         let normal = SIMD3<Float>(Float(n.x), Float(n.y), Float(n.z))
-        if let d = shapes.directions[a], simd_dot(normal, d) < 0.7 { return false }
-        if let d = shapes.directions[b], simd_dot(-normal, d) < 0.7 { return false }
+        if let d = shapes.directions[.init(a)], simd_dot(normal, d) < 0.7 { return false }
+        if let d = shapes.directions[.init(b)], simd_dot(-normal, d) < 0.7 { return false }
         return true
     }
 }
 
 extension B3World {
     func applyContactRules(_ s: B3PhysicsSimulationComponent) {
-        b3World_SetFrictionCallback(id, s.frictionCombine.callback)
-        b3World_SetRestitutionCallback(id, s.restitutionCombine.callback)
+        Self.installContactRules(on: id, s, oneWay: oneWayShapes)
+    }
+
+    /// Installs the material combine modes and the one-way filter on a world, this one or a
+    /// forecast's copy. `oneWay` must outlive the world's steps.
+    static func installContactRules(on world: b3WorldId, _ s: B3PhysicsSimulationComponent, oneWay: OneWayShapes) {
+        b3World_SetFrictionCallback(world, s.frictionCombine.callback)
+        b3World_SetRestitutionCallback(world, s.restitutionCombine.callback)
+        b3World_SetPreSolveCallback(world, OneWayShapes.preSolve, Unmanaged.passUnretained(oneWay).toOpaque())
     }
 
     /// Points each one-way shape's direction along its body's current rotation. Runs before the
@@ -52,17 +63,25 @@ extension B3World {
             // The entity's scale can mirror the direction; its rotation turns it.
             let mirror = SIMD3<Float>(r.scale.x < 0 ? -1 : 1, r.scale.y < 0 ? -1 : 1, r.scale.z < 0 ? -1 : 1)
             let d = b3Body_GetRotation(r.bodyId).simd.act(simd_normalize(local * mirror))
-            for s in r.shapeIds { oneWayShapes.directions[s] = d }
+            for s in r.shapeIds { oneWayShapes.directions[.init(s)] = d }
         }
     }
 
     /// Called by a body record when it creates or destroys its shapes.
     func oneWayShapesChanged(_ record: BodyRecord, removing old: [b3ShapeId]) {
-        for s in old { oneWayShapes.directions[s] = nil }
+        for s in old { oneWayShapes.directions[.init(s)] = nil }
         if record.collision.oneWayDirection != nil, b3Body_IsValid(record.bodyId) {
+            // Box3D's mesh and height-field contacts never call the pre-solve callback.
+            if record.collision.shapes.contains(where: \.isStaticOnly) || record.collision.bakesCompound {
+                log.warning("oneWayDirection on mesh, height-field or compound shapes has no effect: Box3D does not filter their contacts.")
+            }
             oneWayRecords[record.entity.id] = record
         } else {
             oneWayRecords[record.entity.id] = nil
         }
     }
+}
+
+extension OneWayShapes.Key {
+    init(_ id: b3ShapeId) { self.init(index: id.index1, generation: id.generation) }
 }

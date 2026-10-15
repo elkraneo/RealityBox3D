@@ -73,6 +73,24 @@ import CBox3D
         #expect(ball.position.y < 1.9, "an upside-down platform should stop the throw: \(ball.position)")
     }
 
+    // A forecast filters one-way contacts as the world does, slow or fast, and outlives its world.
+    @Test(arguments: [Float(9), 60]) func forecastKeepsOneWayRules(speed: Float) throws {
+        let r = root()
+        let platform = body(r, .generateBox(size: [4, 0.2, 4]), at: [0, 2, 0], mode: .static) { $0.oneWayDirection = [0, 1, 0] }
+        let ball = body(r, .generateSphere(radius: 0.2), at: [0, 0.5, 0])
+        ball.components[B3PhysicsBodyComponent.self]!.isContinuousCollisionDetectionEnabled = true
+        var w: B3World? = B3World(root: r, settings: r.components[B3PhysicsSimulationComponent.self]!)
+        w!.update(entities: [platform, ball], deltaTime: 1.0 / 60)
+        ball.b3.setVelocity(linear: [0, speed, 0], angular: .zero)
+        let forecast = try #require(w!.forecast())
+        for _ in 0..<240 { w!.update(entities: [platform, ball], deltaTime: 1.0 / 60) }
+        let real = ball.position
+        w = nil
+        forecast.step(240)
+        let predicted = try #require(forecast.transform(of: ball)).translation
+        #expect(simd_distance(predicted, real) < 1e-3, "forecast \(predicted), world \(real)")
+    }
+
     /// How far a box slides on a 0.2-friction floor at 3 m/s, with its own friction 1.
     func slide(_ combine: B3MaterialCombine) -> Float {
         let r = root { $0.frictionCombine = combine }
@@ -115,13 +133,21 @@ import CBox3D
         #expect(bounce(.multiply) < 0.3, "multiply should not bounce")
     }
 
-    // Changing the combine mode on the root applies to new contacts.
+    // Changing the combine mode on a running world changes how far a box slides.
     @Test func combineModeChangesApply() {
         let r = root()
+        let floor = body(r, .generateBox(size: [40, 1, 4]), at: [0, -0.5, 0], mode: .static,
+                         material: .generate(staticFriction: 0.2, dynamicFriction: 0.2))
+        let box = body(r, .generateBox(size: [0.5, 0.5, 0.5]), at: [-15, 0.25, 0],
+                       material: .generate(staticFriction: 1, dynamicFriction: 1))
         let w = B3World(root: r, settings: r.components[B3PhysicsSimulationComponent.self]!)
+        for _ in 0..<30 { w.update(entities: [floor, box], deltaTime: 1.0 / 60) }
         r.components[B3PhysicsSimulationComponent.self]!.frictionCombine = .minimum
-        w.update(entities: [], deltaTime: 1.0 / 60)
-        #expect(w.settings.frictionCombine == .minimum)
+        box.components.set(B3PhysicsMotionComponent(linearVelocity: [3, 0, 0]))
+        let start = box.position.x
+        for _ in 0..<240 { w.update(entities: [floor, box], deltaTime: 1.0 / 60) }
+        let slid = box.position.x - start
+        #expect(abs(slid - 9 / (2 * 0.2 * 9.81)) < 0.2, "slid \(slid) after switching to the minimum")
     }
 }
 
@@ -153,6 +179,22 @@ import CBox3D
             #expect(simd_dot(simd_normalize(moved), simd_normalize(start)) > 0.99, "ball from \(start) moved \(moved)")
         }
         #expect(simd_distance(balls[3].position, positions[3]) < 1e-4, "a ball out of range moved")
+    }
+
+    // A mesh on a dynamic body is left out, so a blast over it has nothing to assert on.
+    @Test func blastSkipsDynamicMeshes() {
+        let r = Entity()
+        r.components.set(B3PhysicsSimulationComponent())
+        let e = Entity()
+        e.components.set(B3PhysicsBodyComponent(density: 1000))
+        e.components.set(B3CollisionComponent(shapes: [.generateStaticMesh(positions: [[0, 0, 0], [1, 0, 0], [0, 0, 1]], faceIndices: [UInt32(0), 2, 1]),
+                                                       .generateSphere(radius: 0.2)]))
+        r.addChild(e)
+        let w = B3World(root: r)
+        w.update(entities: [e], deltaTime: 1.0 / 60)
+        #expect(b3Body_GetShapeCount(w.record(for: e)!.bodyId) == 1)
+        w.explode(at: .zero, radius: 3, impulsePerArea: 10)
+        w.update(entities: [e], deltaTime: 1.0 / 60)
     }
 
     @Test func malformedBlastIsIgnored() {
@@ -264,9 +306,77 @@ import CBox3D
         #expect(baked.allSatisfy { $0.position.y > 0.9 }, "\(baked.map(\.position))")
     }
 
-    @Test func bakedCompoundRebakesOnMaterialChange() {
+    @Test func bakedCompoundRebakesOnMaterialChange() throws {
         let (_, level, _, w) = scene(baked: true)
-        level.components[B3PhysicsBodyComponent.self]!.material = .generate(staticFriction: 0.1, dynamicFriction: 0.1)
+        level.components[B3PhysicsBodyComponent.self]!.material = .generate(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0.7)
+        w.update(entities: [level], deltaTime: 1.0 / 60)
+        let shape = try #require(w.record(for: level)?.shapeIds.first)
+        #expect(b3Body_GetShapeCount(w.record(for: level)!.bodyId) == 1)
+        // The baked compound carries the new surface.
+        let child = b3GetCompoundMaterials(b3Shape_GetCompound(shape))!.pointee
+        #expect(abs(child.friction - 0.1) < 1e-6 && abs(child.restitution - 0.7) < 1e-6, "baked \(child.friction), \(child.restitution)")
+    }
+
+    // A baked body that becomes dynamic loses its compound before Box3D sees the type change,
+    // and one that becomes static again bakes.
+    @Test func bakedBodyChangesMode() {
+        let (_, level, _, w) = scene(baked: true)
+        level.components[B3PhysicsBodyComponent.self]!.mode = .dynamic
+        w.update(entities: [level], deltaTime: 1.0 / 60)
+        let id = w.record(for: level)!.bodyId
+        #expect(b3Body_GetType(id) == b3_dynamicBody)
+        // Box, sphere and capsule as separate shapes; the mesh is left out on a dynamic body.
+        #expect(b3Body_GetShapeCount(id) == 3)
+        for _ in 0..<10 { w.update(entities: [level], deltaTime: 1.0 / 60) }
+        #expect(level.position.y < 0, "the now dynamic level did not fall: \(level.position)")
+        level.components[B3PhysicsBodyComponent.self]!.mode = .static
+        w.update(entities: [level], deltaTime: 1.0 / 60)
+        #expect(b3Body_GetType(id) == b3_staticBody)
+        #expect(b3Body_GetShapeCount(id) == 1)
+    }
+
+    @Test func bakedTriggerStaysSeparate() {
+        let r = Entity()
+        r.components.set(B3PhysicsSimulationComponent())
+        let zone = Entity()
+        zone.components.set(B3PhysicsBodyComponent(density: 1000, mode: .static))
+        var c = B3CollisionComponent(shapes: [.generateSphere(radius: 1), B3ShapeResource.generateSphere(radius: 1).offsetBy(translation: [3, 0, 0])],
+                                     mode: .trigger)
+        c.bakesCompound = true
+        zone.components.set(c)
+        r.addChild(zone)
+        let w = B3World(root: r)
+        w.update(entities: [zone], deltaTime: 1.0 / 60)
+        #expect(b3Body_GetShapeCount(w.record(for: zone)!.bodyId) == 2)
+        // A baked collider turned into a trigger unbakes too.
+        let level = Entity()
+        level.components.set(B3PhysicsBodyComponent(density: 1000, mode: .static))
+        var lc = B3CollisionComponent(shapes: [.generateSphere(radius: 1), B3ShapeResource.generateSphere(radius: 1).offsetBy(translation: [3, 0, 0])])
+        lc.bakesCompound = true
+        level.components.set(lc)
+        r.addChild(level)
+        w.update(entities: [zone, level], deltaTime: 1.0 / 60)
+        level.components[B3CollisionComponent.self]!.mode = .trigger
+        w.update(entities: [zone, level], deltaTime: 1.0 / 60)
+        #expect(b3Body_GetShapeCount(w.record(for: level)!.bodyId) == 2)
+    }
+
+    // A palette longer than the triangles use, baked: Box3D counts only used materials.
+    @Test func bakedMeshWithUnusedMaterials() {
+        let r = Entity()
+        r.components.set(B3PhysicsSimulationComponent())
+        let level = Entity()
+        level.components.set(B3PhysicsBodyComponent(density: 1000, mode: .static))
+        var c = B3CollisionComponent(shapes: [
+            .generateStaticMesh(positions: [[-5, 0, -5], [5, 0, -5], [5, 0, 5], [-5, 0, 5]], faceIndices: [UInt32(0), 2, 1, 0, 3, 2],
+                                triangleMaterials: .init(materials: [.generate(dynamicFriction: 0.3), .generate(dynamicFriction: 0.9)],
+                                                         indices: [0, 0])),
+            B3ShapeResource.generateSphere(radius: 1).offsetBy(translation: [0, -2, 0]),
+        ])
+        c.bakesCompound = true
+        level.components.set(c)
+        r.addChild(level)
+        let w = B3World(root: r)
         w.update(entities: [level], deltaTime: 1.0 / 60)
         #expect(b3Body_GetShapeCount(w.record(for: level)!.bodyId) == 1)
     }

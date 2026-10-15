@@ -56,7 +56,6 @@ public final class B3World {
         def.workerCount = UInt32(max(1, settings.workerCount))
         if let r = settings.restitutionThreshold { def.restitutionThreshold = r }
         self.id = b3CreateWorld(&def)
-        b3World_SetPreSolveCallback(id, OneWayShapes.preSolve, Unmanaged.passUnretained(oneWayShapes).toOpaque())
         applyContactRules(settings)
         // Lets `entity.b3` find worlds the system does not own.
         if registersStandalone { B3WorldRegistry.shared.registerStandalone(self, root: root) }
@@ -146,8 +145,11 @@ public final class B3World {
             if record.body != body || record.collision != collision || !record.scale.isClose(to: pose.scale) {
                 record.apply(body: body, collision: collision, scale: pose.scale)
             }
+            // Re-enabled first, so edits made while disabled apply over the velocities it kept.
+            let enabled = entity.isEnabledInHierarchy
+            if enabled { record.setEnabled(true) }
             record.syncInbound(pose: pose, motion: motion)
-            record.setEnabled(entity.isEnabledInHierarchy)
+            if !enabled { record.setEnabled(false) }
         } else {
             let record = BodyRecord(world: self, entity: entity, body: body, collision: collision, pose: pose, motion: motion)
             records[entity.id] = record
@@ -161,7 +163,7 @@ public final class B3World {
     private func remove(_ key: Entity.ID, _ record: BodyRecord) {
         if record.isNested { nestedBodyCount -= 1 }
         if oneWayRecords.removeValue(forKey: key) != nil {
-            for s in record.shapeIds { oneWayShapes.directions[s] = nil }
+            for s in record.shapeIds { oneWayShapes.directions[.init(s)] = nil }
         }
         record.destroy()
         records[key] = nil
@@ -172,7 +174,6 @@ public final class B3World {
     private func finishFrame(deltaTime: Double, inboundStart t0: ContinuousClock.Instant) {
         readAnchors()
         syncJoints()
-        refreshOneWayShapes()
         let root = self.root
         let fixedDt = 1.0 / settings.fixedRate
 
@@ -259,7 +260,6 @@ public final class B3World {
 
     /// Advances one fixed step, whatever the accumulator says. For paused stepping and tools.
     public func step(events: inout [any B3CollisionEvent]) {
-        refreshOneWayShapes()
         step(fixedDt: Float(1.0 / settings.fixedRate), events: &events)
         frames.removeAll(keepingCapacity: true)
         writeActive(alpha: 1, root: root)
@@ -270,6 +270,8 @@ public final class B3World {
         for h in willSimulate.values { h(.init(deltaTime: fixedDt)) }
         for r in kinematic.values { r.driveKinematic(fixedDt: fixedDt) }
         if !anchors.isEmpty { driveAnchors(fixedDt: fixedDt) }
+        // Each step judges one-way contacts by where the surfaces point at its start.
+        refreshOneWayShapes()
         b3World_Step(id, fixedDt, Int32(settings.subStepCount))
         stepIndex += 1
         let moves = b3World_GetBodyEvents(id)

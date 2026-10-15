@@ -103,6 +103,26 @@ import simd
     }
 }
 
+extension BodyReadoutTests {
+    // A body disabled while moving resumes with its velocity.
+    @Test func disabledBodyKeepsItsMomentum() {
+        let r = root(gravity: .zero)
+        let ball = body(r, .generateSphere(radius: 0.2), at: .zero)
+        ball.components.set(B3PhysicsMotionComponent(linearVelocity: [2, 0, 0], angularVelocity: [0, 1, 0]))
+        let w = world(r)
+        for _ in 0..<5 { w.update(entities: [ball], deltaTime: 1.0 / 60) }
+        let before = (ball.b3.linearVelocity ?? .zero, ball.b3.angularVelocity ?? .zero)
+        ball.isEnabled = false
+        for _ in 0..<5 { w.update(entities: [ball], deltaTime: 1.0 / 60) }
+        ball.isEnabled = true
+        w.update(entities: [ball], deltaTime: 0)
+        let v = ball.b3.linearVelocity ?? .zero, spin = ball.b3.angularVelocity ?? .zero
+        #expect(simd_length(before.0) > 1.9 && simd_length(before.1) > 0.5, "moving before: \(before)")
+        #expect(simd_distance(v, before.0) < 1e-4, "velocity \(v), before \(before.0)")
+        #expect(simd_distance(spin, before.1) < 1e-4, "spin \(spin), before \(before.1)")
+    }
+}
+
 /// Disabled entities in the system's incremental path.
 @MainActor
 @Suite(.serialized) struct DisabledEntitySystemTests {
