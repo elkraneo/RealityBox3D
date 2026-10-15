@@ -144,11 +144,10 @@ public final class B3World {
             if record.body != body || record.collision != collision || !record.scale.isClose(to: pose.scale) {
                 record.apply(body: body, collision: collision, scale: pose.scale)
             }
-            // Re-enabled first, so edits made while disabled apply over the velocities it kept.
-            let enabled = entity.isEnabledInHierarchy
-            if enabled { record.setEnabled(true) }
+            // Enabled or disabled before the sync: a re-enabled body takes this frame's edits over
+            // the velocities it kept, a disabled one is placed and keeps them for later.
+            record.setEnabled(entity.isEnabledInHierarchy)
             record.syncInbound(pose: pose, motion: motion)
-            if !enabled { record.setEnabled(false) }
         } else {
             let record = BodyRecord(world: self, entity: entity, body: body, collision: collision, pose: pose, motion: motion)
             records[entity.id] = record

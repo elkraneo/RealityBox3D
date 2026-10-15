@@ -87,8 +87,8 @@ extension B3World {
         for s in old { oneWayShapes.directions[.init(s)] = nil }
         if record.collision.oneWayDirection != nil, b3Body_IsValid(record.bodyId) {
             // Box3D's mesh and height-field contacts never call the pre-solve callback.
-            if record.collision.shapes.contains(where: \.isStaticOnly) || record.collision.bakesCompound {
-                log.warning("oneWayDirection on meshes, height fields or compounds: Box3D filters their continuous-collision hits but not their regular contacts, which always collide.")
+            if record.collision.shapes.contains(where: \.isStaticOnly) {
+                log.warning("oneWayDirection on meshes or height fields, compounds' included: Box3D filters their continuous-collision hits but not their regular contacts, which always collide.")
             }
             oneWayRecords[record.entity.id] = record
         } else {

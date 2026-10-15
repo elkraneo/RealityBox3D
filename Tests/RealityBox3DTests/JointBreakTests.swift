@@ -198,4 +198,26 @@ import simd
         #expect(bob.position.y < 0)
         _ = sub
     }
+
+    // Two joints on the same pins, one weak, reordered by a handler: the weak one goes, the
+    // strong one stays.
+    @Test func duplicatePinsKeepTheRightJoint() throws {
+        let (root, bob, w) = try pendulum(.init(force: 20))
+        var c = try #require(root.components[B3PhysicsJointsComponent.self])
+        var strong = try #require(c.joints.first as? B3PhysicsSphericalJoint)
+        strong.breakLimit = .init(force: 1000)
+        c.joints.append(strong)
+        root.components.set(c)
+        let sub = w.subscribe(to: B3PhysicsSimulationEvents.WillSimulate.self) { _ in
+            guard var c = root.components[B3PhysicsJointsComponent.self] else { return }
+            c.joints.reverse()
+            root.components.set(c)
+        }
+        frames(w, bob, 60)
+        let left = root.components[B3PhysicsJointsComponent.self]?.joints ?? []
+        #expect(left.count == 1 && left.first?.breakLimit?.force == 1000, "left \(left.map { $0.breakLimit as Any })")
+        #expect(w.jointIds.count == 1)
+        #expect(bob.position.y > 1.9, "bob at \(bob.position)")
+        _ = sub
+    }
 }

@@ -154,8 +154,8 @@ extension BodyReadoutTests {
         let k = body(r, .generateBox(size: [0.5, 0.5, 0.5]), at: .zero, mode: .kinematic)
         let w = world(r)
         w.update(entities: [k], deltaTime: 1.0 / 60)
+        // Disabled and moved in the same frame.
         k.isEnabled = false
-        w.update(entities: [k], deltaTime: 1.0 / 60)
         k.position = [1, 0, 0]
         w.update(entities: [k], deltaTime: 1.0 / 60)
         k.components.set(B3PhysicsMotionComponent(linearVelocity: [0, 2, 0]))

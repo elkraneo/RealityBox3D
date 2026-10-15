@@ -24,9 +24,13 @@ extension B3World {
             // Between frames the component equals the applied joints. A handler may have edited
             // it since, a motor or a limit, or moved entries: a joint is the same while its type
             // and pins are, wherever it now sits.
+            // Exact matches first, so a duplicate on the same pins is not taken for it.
             if let c = component {
-                let index = b.slot < c.joints.count && Self.isSameJoint(c.joints[b.slot], joint)
-                    ? b.slot : c.joints.firstIndex { Self.isSameJoint($0, joint) }
+                let atSlot = b.slot < c.joints.count ? b.slot : nil
+                let index = atSlot.flatMap { c.joints[$0].isEqual(to: joint) ? $0 : nil }
+                    ?? c.joints.firstIndex { $0.isEqual(to: joint) }
+                    ?? atSlot.flatMap { Self.isSameJoint(c.joints[$0], joint) ? $0 : nil }
+                    ?? c.joints.firstIndex { Self.isSameJoint($0, joint) }
                 if let index { component?.joints.remove(at: index) }
             }
             brokenJoints.append(B3JointEvents.Broke(joint: joint, force: b.force, torque: b.torque))
