@@ -46,3 +46,24 @@ Two runs: `results-2026-10-15-m1-loaded.txt` under a load average of about 14 fr
   line with the loaded run.
 - This harness drives `B3World.update(entities:)`, a full scan each frame. Inside RealityKit,
   `B3PhysicsSystem` reads only changed entities, so sleeping bodies cost nothing to sync.
+
+## Newton's cradle
+
+`engine-comparison cradle` runs Apple's "Simulating physics joints in your RealityKit app" scene
+with Apple's values on RealityKit and on RealityBox3D (its sample's scene, with
+`sequentialImpacts`), using RealitySDFPhysics's metrics: release the first k balls from 30° and
+record each ball's farthest swing over the first swing out; push the first ball with Apple's
+impulse; and send a free row of five balls, awake and asleep, the first at 1 m/s. These measure
+behavior, not time, so they do not depend on load. `results-2026-10-15-m1-cradle.txt`:
+
+| Case | A real cradle | RealityBox3D | RealityKit |
+| --- | --- | --- | --- |
+| Lift 1 | ball 5 out, others still | 29.8°, others ≤ 0.3° | all five 5.9–7.7° |
+| Lift 2 | balls 4–5 out | 29.8° / 29.8°, others ≤ 0.3° | all five 11.9–14.3° |
+| Lift 3 | balls 3–5 out | 29.8° / 29.8° / 30.0°, others ≤ 0.3° | all five 17.7–17.9° |
+| Push | ball 1 to 48°, then ball 5 out | ball 5 48.1°, balls 2–4 ≤ 0.8° | balls 2–5 out together, 18.9–24.3° |
+| Free row, awake or asleep | last ball 1.000 m/s, the rest 0 | 1.000, the rest 0.000 | −0.630, 0.367, 0.416, 0.416, 0.432 |
+
+Box3D's solver alone shares momentum like RealityKit's (one ball in sends three out at 12°);
+`sequentialImpacts` resolves the impacts pair by pair before each step. RealitySDFPhysics's
+cradle, the same method in its own solver, is in its PR #26, after the 0.2.0 this package pins.

@@ -1,6 +1,7 @@
 // The same piles on three engines, headless, on the machine at hand.
 //
 //   swift run -c release --scratch-path <dir> engine-comparison [tori|boxes] [--counts 25,100,400] [--steps 300]
+//   swift run -c release --scratch-path <dir> engine-comparison cradle   (Apple's Newton's cradle; see Cradle.swift)
 //
 // Every engine runs at 60 Hz for the same number of steps, with its default settings and sleeping:
 //   RealityKit:      its physics, stepped by its clock; the time between its WillSimulate and
@@ -97,6 +98,10 @@ var args = Array(CommandLine.arguments.dropFirst())
     guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
     defer { args.removeSubrange(i...(i + 1)) }
     return args[i + 1]
+}
+if args.first == "cradle" {
+    try await reportCradle()
+    exit(0)
 }
 let steps = take("--steps").flatMap(Int.init) ?? 300
 let countsArg = take("--counts").map { $0.split(separator: ",").compactMap { Int($0) } }
