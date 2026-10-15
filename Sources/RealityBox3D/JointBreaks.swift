@@ -21,17 +21,23 @@ extension B3World {
         for b in broken.sorted(by: { $0.slot > $1.slot }) where b.slot < applied.count {
             let joint = applied.remove(at: b.slot)
             jointSlots.remove(at: b.slot)
-            // Between frames the component equals the applied joints; a `WillSimulate` handler
-            // may have edited it since, then the joint is found by value.
+            // Between frames the component equals the applied joints. A handler may have edited
+            // it since, a motor or a limit, or moved entries: a joint is the same while its type
+            // and pins are, wherever it now sits.
             if let c = component {
-                let index = b.slot < c.joints.count && c.joints[b.slot].isEqual(to: joint)
-                    ? b.slot : c.joints.firstIndex { $0.isEqual(to: joint) }
+                let index = b.slot < c.joints.count && Self.isSameJoint(c.joints[b.slot], joint)
+                    ? b.slot : c.joints.firstIndex { Self.isSameJoint($0, joint) }
                 if let index { component?.joints.remove(at: index) }
             }
             brokenJoints.append(B3JointEvents.Broke(joint: joint, force: b.force, torque: b.torque))
         }
         appliedJoints = B3PhysicsJointsComponent(joints: applied)
         if let root, let component { root.components.set(component) }
+    }
+
+    /// The same joint, perhaps with other parameters: same type, same pins.
+    static func isSameJoint(_ a: any B3PhysicsJoint, _ b: any B3PhysicsJoint) -> Bool {
+        type(of: a) == type(of: b) && a.pin0 == b.pin0 && a.pin1 == b.pin1
     }
 
     /// At the end of the frame: the joints that broke during it, oldest first.

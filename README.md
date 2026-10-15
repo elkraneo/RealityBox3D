@@ -197,8 +197,8 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
 - Box3D hulls have at most 128 faces and 128 edges, so rounded hulls are simplified to fit.
 - Box3D's length unit is process-wide, not per world.
 - One-way surfaces judge each contact by its normal alone: a body pushed sideways into a
-  platform's edge from below can be lifted onto it. Box3D filters convex contacts only, so a
-  one-way direction on a mesh or height field has no effect.
+  platform's edge from below can be lifted onto it. On meshes and height fields Box3D
+  filters only fast bodies' continuous-collision hits; their regular contacts always collide.
 - Forecasts do not break joints, and explosions push spheres, capsules and hulls, not meshes.
 - A broken joint reports its load at the end of the step it broke in, not the peak that broke it.
 - The apps run on macOS. The library builds for iOS and visionOS but has not run on a device.

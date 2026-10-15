@@ -487,13 +487,15 @@ final class BodyRecord {
     func syncInbound(pose: Pose, motion: B3PhysicsMotionComponent?) {
         let moved = !pose.isClose(to: lastPose)
         switch body.mode {
-        case .kinematic:
+        case .kinematic where isEnabled:
             if moved {
                 kinematicTarget = pose
                 isVelocityDriven = false
             }
         default:
+            // A disabled kinematic body cannot travel to a target: it is placed, like the others.
             if moved {
+                if body.mode == .kinematic { kinematicTarget = nil; isVelocityDriven = false }
                 // Teleport: the app moved a static or dynamic entity directly.
                 b3Body_SetTransform(bodyId, b3Vec3(pose.position), b3Quat(pose.orientation))
                 // Box3D does not wake a body it moves; a teleported dynamic body must fall from there.
@@ -506,6 +508,8 @@ final class BodyRecord {
             writeVelocity(b3Vec3(motion.linearVelocity), b3Vec3(motion.angularVelocity))
             if body.mode == .kinematic, !moved {
                 isVelocityDriven = motion.linearVelocity != .zero || motion.angularVelocity != .zero
+                // The newer velocity wins over a move still waiting, as with `setVelocity`.
+                kinematicTarget = nil
             }
         }
         lastPose = pose

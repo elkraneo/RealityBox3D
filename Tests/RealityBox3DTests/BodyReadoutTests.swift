@@ -147,6 +147,27 @@ extension BodyReadoutTests {
     }
 }
 
+extension BodyReadoutTests {
+    // A disabled kinematic body moved, then given a velocity: it resumes moving at that velocity.
+    @Test func disabledKinematicTakesTheLatestVelocity() {
+        let r = root(gravity: .zero)
+        let k = body(r, .generateBox(size: [0.5, 0.5, 0.5]), at: .zero, mode: .kinematic)
+        let w = world(r)
+        w.update(entities: [k], deltaTime: 1.0 / 60)
+        k.isEnabled = false
+        w.update(entities: [k], deltaTime: 1.0 / 60)
+        k.position = [1, 0, 0]
+        w.update(entities: [k], deltaTime: 1.0 / 60)
+        k.components.set(B3PhysicsMotionComponent(linearVelocity: [0, 2, 0]))
+        w.update(entities: [k], deltaTime: 1.0 / 60)
+        k.isEnabled = true
+        for _ in 0..<30 { w.update(entities: [k], deltaTime: 1.0 / 60) }
+        let v = k.b3.linearVelocity ?? .zero
+        #expect(simd_distance(v, [0, 2, 0]) < 1e-3, "velocity \(v)")
+        #expect(abs(k.position.y - 1) < 0.05 && abs(k.position.x - 1) < 1e-3, "at \(k.position)")
+    }
+}
+
 /// Disabled entities in the system's incremental path.
 @MainActor
 @Suite(.serialized) struct DisabledEntitySystemTests {

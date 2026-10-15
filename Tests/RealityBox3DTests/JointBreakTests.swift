@@ -182,4 +182,20 @@ import simd
         }
         _ = sub
     }
+
+    // A joint edited by a WillSimulate handler, then broken in that step, stays broken.
+    @Test func editedJustBeforeBreakingStaysBroken() throws {
+        let (root, bob, w) = try pendulum(.init(force: 20))
+        let sub = w.subscribe(to: B3PhysicsSimulationEvents.WillSimulate.self) { _ in
+            guard var c = root.components[B3PhysicsJointsComponent.self], var j = c.joints.first as? B3PhysicsSphericalJoint else { return }
+            j.friction = (j.friction ?? 0) + 0.01
+            c.joints[0] = j
+            root.components.set(c)
+        }
+        frames(w, bob, 60)
+        #expect(root.components[B3PhysicsJointsComponent.self]?.joints.isEmpty == true)
+        #expect(w.jointIds.isEmpty)
+        #expect(bob.position.y < 0)
+        _ = sub
+    }
 }
