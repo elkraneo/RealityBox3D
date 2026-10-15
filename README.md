@@ -16,7 +16,7 @@ Status: 0.1, early. Box3D upstream is alpha and pinned to one commit.
 
 ### Siblings
 
-[RealitySDFPhysics](https://github.com/elkraneo/SDFCollisionKit) is the same idea for signed
+[RealitySDFPhysics](https://github.com/elkraneo/RealitySDFPhysics) is the same idea for signed
 distance fields: exact contact for concave and interlocking shapes such as gears, chains and meshes
 of any shape, which convex engines approximate. RealityBox3D is for many convex and compound bodies,
 fast stable joints, vehicles, ragdolls and characters. The two share their conventions (an engine
@@ -84,7 +84,9 @@ if let forecast = world.forecast() {
 
 `PhysicsBodyMode`, `CollisionFilter`, `CollisionGroup` and `GeometricPin` are RealityKit's own
 types. Joints follow RealityKit's axes: revolute joints turn and prismatic joints slide along the
-pins' x-axis, and `joint.addToSimulation()` adds them to the simulation root. The body and
+pins' x-axis, and `joint.addToSimulation()` adds them to the simulation root. A pin on a skeletal
+joint follows the skeleton's animation; RealityKit resolves such pins only for entities in a
+running scene, so they do not attach in a headless `B3World`. The body and
 collision components stay separate, as in RealityKit, because Box3D bodies take several shapes.
 
 ## Samples

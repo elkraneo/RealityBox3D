@@ -4,8 +4,8 @@
 //
 // Every engine runs at 60 Hz for the same number of steps, with its default settings and sleeping:
 //   RealityKit:      its physics, stepped by its clock; the time between its WillSimulate and
-//                    DidSimulate events (SDFCollisionKit's method)
-//   SDFCollisionKit: SDFSimulation.step(root:), real-time preset, multithreaded
+//                    DidSimulate events (RealitySDFPhysics's method)
+//   RealitySDFPhysics: SDFSimulation.step(root:), real-time preset, multithreaded
 //   RealityBox3D:    B3World.update, which includes reading entities in and writing poses out;
 //                    "engine" is Box3D's own step inside it
 
@@ -14,7 +14,7 @@ import Foundation
 import Metal
 import RealityBox3D
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 struct Timing {
     var mean = 0.0, worst = 0.0, engine: Double?
@@ -26,7 +26,7 @@ func ms(_ a: UInt64, _ b: UInt64) -> Double { Double(b - a) / 1e6 }
 
 @MainActor
 func timeSDF(_ pile: Pile, count: Int, steps: Int) -> Timing {
-    var settings = SDFSimulationComponent(simulation: SDFSimulation())
+    var settings = SDFPhysicsSimulationComponent(simulation: SDFSimulation())
     settings.isMultithreaded = true
     let (root, bodies) = pile.makeSDF(count: count, settings: settings)
     var times: [Double] = [], engine = 0.0
@@ -118,7 +118,7 @@ for pile in piles {
             var rows: [(String, Timing)] = []
             rows.append(("RealityBox3D, 1 worker", timeBox3D(pile, count: count, steps: steps, workers: 1)))
             rows.append(("RealityBox3D, \(cores) workers", timeBox3D(pile, count: count, steps: steps, workers: cores)))
-            rows.append(("SDFCollisionKit, multithreaded", timeSDF(pile, count: count, steps: steps)))
+            rows.append(("RealitySDFPhysics, multithreaded", timeSDF(pile, count: count, steps: steps)))
             return rows
         } + [("RealityKit", try await timeRealityKit(pile, count: count, steps: steps))]
         for (name, t) in rows {

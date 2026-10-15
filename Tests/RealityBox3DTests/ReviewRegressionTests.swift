@@ -444,6 +444,29 @@ import CBox3D
         #expect(w.jointSlots.first?.resolved?.tracksPins == false)
     }
 
+    /// A rigged box: a skeleton "base" → "tip", the tip 1 m above, every vertex bound to the base.
+    func riggedModel() throws -> ModelEntity {
+        let skeleton = try #require(MeshResource.Skeleton(
+            id: "rig", jointNames: ["base", "base/tip"],
+            inverseBindPoseMatrices: [matrix_identity_float4x4, Transform(translation: [0, -1, 0]).matrix],
+            restPoseTransforms: [Transform(), Transform(translation: [0, 1, 0])], parentIndices: [nil, 0]))
+        var contents = MeshResource.generateBox(size: 0.1).contents
+        contents.skeletons = MeshSkeletonCollection([skeleton])
+        contents.models = MeshModelCollection(contents.models.map { model in
+            var model = model
+            model.parts = MeshPartCollection(model.parts.map { part in
+                var part = part
+                part.skeletonID = "rig"
+                part.jointInfluences = .init(influences: MeshBuffer(Array(repeating: MeshJointInfluence(jointIndex: 0, weight: 1),
+                                                                         count: part.positions.count)),
+                                             influencesPerVertex: 1)
+                return part
+            })
+            return model
+        })
+        return ModelEntity(mesh: try MeshResource.generate(from: contents), materials: [])
+    }
+
     // 5 (third pass). A torque relative to a degenerate frame stays finite.
     @Test func torqueThroughZeroScaleIsFinite() {
         let r = root()
@@ -528,6 +551,33 @@ import CBox3D
         let record = try #require(RealityBox3D.world(for: ball)?.record(for: ball))
         #expect(record.bodyId == bodyID, "the body was destroyed and recreated")
         #expect((ball.b3.linearVelocity?.x ?? 0) > 0.5, "velocity lost: \(String(describing: ball.b3.linearVelocity))")
+    }
+
+    // Skeletal pins: a joint pinned to an animated skeletal joint follows it with no edit.
+    // RealityKit resolves skeletal pins only for entities in a running scene.
+    @Test func skeletalPinFollowsItsJoint() async throws {
+        let h = try SystemHarness()
+        let rig = try ReviewRegressionTests().riggedModel()
+        h.root.addChild(rig)
+        try await h.frames(1)
+        let pin = rig.pins.set(named: "tip", skeletalJointName: "base/tip")
+        let bob = Entity()
+        bob.components.set(B3PhysicsBodyComponent(density: 1000))
+        bob.components.set(B3CollisionComponent(shapes: [.generateSphere(radius: 0.1)]))
+        h.root.addChild(bob)
+        try B3PhysicsSphericalJoint(pin0: pin, pin1: bob.pins.set(named: "b", position: [0, 1, 0])).addToSimulation()
+        try await h.frames(30)
+        // Animate the tip 2 m along x over 2 s, as a skeletal animation would, touching no component.
+        for i in 1...120 {
+            rig.jointTransforms[1] = Transform(translation: [2 * Float(i) / 120, 1, 0])
+            try await h.frames(1)
+        }
+        let tip = try #require(pin.position(relativeTo: h.root))
+        #expect(simd_distance(tip, [2, 1, 0]) < 1e-3, "RealityKit did not move the pin: \(tip)")
+        try await h.frames(30)
+        // The bob swings on its 1 m joint around the moved pin, not the pin's first place.
+        #expect(abs(simd_distance(bob.position(relativeTo: h.root), [2, 1, 0]) - 1) < 0.05,
+                "bob at \(bob.position(relativeTo: h.root))")
     }
 
     // 4 (third pass). A body removed just before its root moves to a scene that already runs

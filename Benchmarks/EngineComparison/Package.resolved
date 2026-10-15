@@ -1,12 +1,13 @@
 {
-  "originHash" : "888c2852079631dcf35a24c26df24b1b4f775754e2dad78a8a3a736190dd56d6",
+  "originHash" : "e3695ea15924c1bfd914909cc41c541bd7cb841e4b5f3ca1950a764d1c5e45df",
   "pins" : [
     {
-      "identity" : "sdfcollisionkit",
+      "identity" : "realitysdfphysics",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/elkraneo/SDFCollisionKit",
+      "location" : "https://github.com/elkraneo/RealitySDFPhysics",
       "state" : {
-        "revision" : "30ddbb90b1932a000f17af9cf22c4cb8f9672937"
+        "revision" : "789e04537ff921b9642aed074ac4845f2d782918",
+        "version" : "0.2.0"
       }
     }
   ],

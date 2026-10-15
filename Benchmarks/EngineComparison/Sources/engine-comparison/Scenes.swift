@@ -1,13 +1,13 @@
 import CoreMedia
 import RealityBox3D
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 
-/// A pile dropped into SDFCollisionKit's benchmark box: a floor 4 m across and walls 5 m high
+/// A pile dropped into RealitySDFPhysics's benchmark box: a floor 4 m across and walls 5 m high
 /// around a 2 m square, so every body stays in.
 enum Pile: String, CaseIterable {
-    /// SDFCollisionKit's own benchmark: tori 30 cm across. RealityKit and Box3D take each torus as
+    /// RealitySDFPhysics's own benchmark: tori 30 cm across. RealityKit and Box3D take each torus as
     /// a compound of 12 capsules, their closest convex approximation.
     case tori
     /// 10 cm boxes, which every engine simulates natively.
@@ -22,7 +22,7 @@ enum Pile: String, CaseIterable {
     static let major: Float = 0.15, minor: Float = 0.04, segments = 12
     static let box: Float = 0.1
 
-    /// Layers of a grid above the box, tilted, as SDFCollisionKit's TorusPile places tori.
+    /// Layers of a grid above the box, tilted, as RealitySDFPhysics's TorusPile places tori.
     func placements(_ count: Int) -> [(position: SIMD3<Float>, orientation: simd_quatf)] {
         let side = self == .tori ? 5 : 10
         let spacing: Float = self == .tori ? 0.36 : 0.18
@@ -50,12 +50,12 @@ enum Pile: String, CaseIterable {
     // MARK: Builders
 
     @MainActor
-    func makeSDF(count: Int, settings: SDFSimulationComponent) -> (root: Entity, bodies: [Entity]) {
+    func makeSDF(count: Int, settings: SDFPhysicsSimulationComponent) -> (root: Entity, bodies: [Entity]) {
         let root = Entity()
         root.components.set(settings)
         for wall in Self.walls {
             let e = Entity(); e.position = wall.center
-            e.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
+            e.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
             root.addChild(e)
         }
         let shape: SDFShape = self == .tori ? .torus(majorRadius: Self.major, minorRadius: Self.minor)
@@ -63,7 +63,7 @@ enum Pile: String, CaseIterable {
         let bodies = placements(count).map { p -> Entity in
             let e = Entity()
             e.transform = Transform(rotation: p.orientation, translation: p.position)
-            e.components.set(SDFBodyComponent(shape: shape))
+            e.components.set(SDFPhysicsBodyComponent(shape: shape))
             root.addChild(e)
             return e
         }
