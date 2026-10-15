@@ -82,3 +82,22 @@ extension B3World {
         return hits.compactMap { h in entity(for: h.0).map { B3CastHit(entity: $0, position: h.1, normal: h.2, distance: h.3 * length) } }
     }
 }
+
+extension B3World {
+    /// Box3D extension: a radial blast at `center`, in the simulation root's space. Each sphere,
+    /// capsule and hull within `radius` takes an impulse of `impulsePerArea` for each unit of area
+    /// facing the blast, fading to zero `falloff` beyond the radius. A negative impulse implodes.
+    /// Static meshes and height fields are not pushed.
+    public func explode(at center: SIMD3<Float>, radius: Float, falloff: Float = 0, impulsePerArea: Float,
+                        mask: CollisionGroup = .all) {
+        guard center.x.isFinite, center.y.isFinite, center.z.isFinite, radius.isFinite, radius >= 0,
+              falloff.isFinite, falloff >= 0, impulsePerArea.isFinite else { return }
+        var def = b3DefaultExplosionDef()
+        def.maskBits = UInt64(mask.rawValue)
+        def.position = b3Vec3(center)
+        def.radius = radius
+        def.falloff = falloff
+        def.impulsePerArea = impulsePerArea
+        b3World_Explode(id, &def)
+    }
+}

@@ -93,6 +93,9 @@ final class SceneTracker {
         })
         subscriptions.append(scene.subscribe(to: SceneEvents.DidAddEntity.self) { [unowned self] e in markSubtree(e.entity) })
         subscriptions.append(scene.subscribe(to: SceneEvents.DidReparentEntity.self) { [unowned self] e in markSubtree(e.child) })
+        // Enabling or disabling an entity turns its bodies, and those below it, on or off.
+        subscriptions.append(scene.subscribe(to: SceneEvents.DidActivateEntity.self) { [unowned self] e in markSubtree(e.entity) })
+        subscriptions.append(scene.subscribe(to: SceneEvents.WillDeactivateEntity.self) { [unowned self] e in markSubtree(e.entity) })
         subscriptions.append(scene.subscribe(to: SceneEvents.WillRemoveEntity.self) { [unowned self] e in dropSubtree(e.entity) })
     }
 

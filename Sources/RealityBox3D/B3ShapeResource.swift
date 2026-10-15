@@ -23,6 +23,10 @@ public struct B3ShapeResource: Equatable, Sendable {
     public var geometry: Geometry
     public var translation: SIMD3<Float> = .zero
     public var rotation: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    /// Box3D extension: this shape's surface, in place of the body's material.
+    public var material: B3PhysicsMaterial?
+    /// Box3D extension: a surface per triangle of a static mesh. Ignored by other shapes.
+    public var triangleMaterials: B3TriangleMaterials?
 
     public init(geometry: Geometry) { self.geometry = geometry }
 
@@ -47,6 +51,22 @@ public struct B3ShapeResource: Equatable, Sendable {
     }
 
     /// Box3D extension: terrain from a grid of heights. See `Geometry.heightField`.
+    /// Box3D extension: a static mesh with a surface per triangle, such as ice and grass in one
+    /// terrain mesh.
+    public static func generateStaticMesh(positions: [SIMD3<Float>], faceIndices: [UInt32],
+                                          triangleMaterials: B3TriangleMaterials) -> B3ShapeResource {
+        var shape = generateStaticMesh(positions: positions, faceIndices: faceIndices)
+        shape.triangleMaterials = triangleMaterials
+        return shape
+    }
+
+    /// Box3D extension: the same shape with its own surface, in place of the body's material.
+    public func withMaterial(_ material: B3PhysicsMaterial) -> B3ShapeResource {
+        var copy = self
+        copy.material = material
+        return copy
+    }
+
     public static func generateHeightField(heights: [Float], countX: Int, countZ: Int, scale: SIMD3<Float> = .one) -> B3ShapeResource {
         .init(geometry: .heightField(heights: heights, countX: countX, countZ: countZ, scale: scale))
     }
@@ -115,4 +135,12 @@ extension MeshResource {
         }
         return (positions, indices)
     }
+}
+
+/// Box3D extension: the surfaces of a static mesh's triangles. `indices` holds one entry per
+/// triangle, an index into `materials`, which holds at most 256.
+public struct B3TriangleMaterials: Equatable, Sendable {
+    public var materials: [B3PhysicsMaterial]
+    public var indices: [UInt8]
+    public init(materials: [B3PhysicsMaterial], indices: [UInt8]) { self.materials = materials; self.indices = indices }
 }

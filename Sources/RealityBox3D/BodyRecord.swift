@@ -17,8 +17,10 @@ final class BodyRecord {
     private(set) var body: B3PhysicsBodyComponent
     private(set) var collision: B3CollisionComponent
     private(set) var scale: SIMD3<Float>
-    private var shapeIds: [b3ShapeId] = []
-    private var meshes: [UnsafeMutablePointer<b3MeshData>] = []
+    private(set) var shapeIds: [b3ShapeId] = []
+    var meshes: [UnsafeMutablePointer<b3MeshData>] = []
+    /// Baked compounds, referenced by their shapes until those are destroyed.
+    var compounds: [UnsafeMutablePointer<b3CompoundData>] = []
     private var heightFields: [UnsafeMutablePointer<b3HeightFieldData>] = []
     private let key: UnsafeMutableRawPointer?
 
@@ -78,6 +80,7 @@ final class BodyRecord {
         previous = current
 
         createShapes()
+        world.oneWayShapesChanged(self, removing: [])
         updateMass()
         if body.mode == .kinematic, let motion {
             isVelocityDriven = motion.linearVelocity != .zero || motion.angularVelocity != .zero
@@ -140,11 +143,18 @@ final class BodyRecord {
 
         let geometryChanged = newCollision.shapes != collision.shapes || !newScale.isClose(to: scale)
             || newCollision.mode != collision.mode // sensor-ness is fixed at shape creation
+            || newCollision.oneWayDirection != collision.oneWayDirection // as is pre-solve
+            // Shapes with their own surfaces keep them: rebuild rather than overwrite them all.
+            || (new.material != old.material && newCollision.shapes.contains { $0.material != nil || $0.triangleMaterials != nil })
+            || newCollision.bakesCompound != collision.bakesCompound
+            || (new.material != old.material && newCollision.bakesCompound) // a compound's materials are baked
         let oldCollision = collision
         collision = newCollision
         scale = newScale
 
         if geometryChanged {
+            let old = shapeIds
+            defer { world.oneWayShapesChanged(self, removing: old) }
             world.retire(shapeIds, of: entity)
             for s in shapeIds where b3Shape_IsValid(s) { b3DestroyShape(s, false) }
             shapeIds.removeAll()
@@ -186,10 +196,30 @@ final class BodyRecord {
         def.enableSensorEvents = true
         def.enableContactEvents = collision.reportsContacts
         def.enableHitEvents = collision.reportsContacts
+        // One-way shapes ask the world's pre-solve callback about each of their contacts.
+        def.enablePreSolveEvents = collision.oneWayDirection != nil
         def.updateBodyMass = false
-        for shape in collision.shapes {
+        var shapes = collision.shapes
+        if collision.bakesCompound {
+            if body.mode == .static {
+                shapes = bakeCompound(def: &def)
+            } else {
+                log.warning("bakesCompound on a non-static body. Box3D bakes compounds for static bodies only.")
+            }
+        }
+        for shape in shapes {
+            def.baseMaterial = (shape.material ?? body.material).b3
             if let id = addShape(shape, def: &def, scale: scale) { shapeIds.append(id) }
         }
+    }
+
+    /// Whether the body takes part in the simulation: off while its entity is disabled, as
+    /// RealityKit drops disabled entities from physics. It keeps its state while off.
+    private(set) var isEnabled = true
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        isEnabled = enabled
+        if enabled { b3Body_Enable(bodyId) } else { b3Body_Disable(bodyId) }
     }
 
     /// Shapes are added with updateBodyMass = false, so mass is resolved here for every body type.
@@ -303,24 +333,51 @@ final class BodyRecord {
             if body.mode != .static {
                 log.warning("Static mesh shape on a non-static body. Box3D only collides meshes on static bodies.")
             }
-            var verts = positions.map { b3Vec3(r.act($0) * s + t) }
-            var idx = indices.map { Int32(bitPattern: $0) }
-            let mesh: UnsafeMutablePointer<b3MeshData>? = verts.withUnsafeMutableBufferPointer { vp in
-                idx.withUnsafeMutableBufferPointer { ip in
+            let surfaces = Self.validSurfaces(shape.triangleMaterials, triangles: indices.count / 3)
+            guard let mesh = Self.makeMesh(positions.map { r.act($0) * s + t }, indices, surfaces) else {
+                log.error("Box3D could not build a mesh from \(indices.count / 3) triangles")
+                return nil
+            }
+            meshes.append(mesh)
+            guard let surfaces else { return b3CreateMeshShape(bodyId, &def, mesh, b3Vec3(x: 1, y: 1, z: 1)) }
+            var palette = surfaces.materials.map(\.b3)
+            return palette.withUnsafeMutableBufferPointer { pp in
+                def.materials = pp.baseAddress
+                def.materialCount = Int32(pp.count)
+                defer { def.materials = nil; def.materialCount = 0 }
+                return b3CreateMeshShape(bodyId, &def, mesh, b3Vec3(x: 1, y: 1, z: 1))
+            }
+        }
+    }
+
+    /// Per-triangle surfaces that fit their mesh: one index per triangle, into at most 256 materials.
+    static func validSurfaces(_ tm: B3TriangleMaterials?, triangles: Int) -> B3TriangleMaterials? {
+        guard let tm else { return nil }
+        guard tm.indices.count == triangles, !tm.materials.isEmpty, tm.materials.count <= 256,
+              tm.indices.allSatisfy({ Int($0) < tm.materials.count }) else {
+            log.error("Invalid triangle materials: \(tm.indices.count) indices for \(triangles) triangles, \(tm.materials.count) materials")
+            return nil
+        }
+        return tm
+    }
+
+    /// Box3D mesh data from positions already in body space.
+    static func makeMesh(_ positions: [SIMD3<Float>], _ indices: [UInt32], _ surfaces: B3TriangleMaterials?) -> UnsafeMutablePointer<b3MeshData>? {
+        var verts = positions.map { b3Vec3($0) }
+        var idx = indices.map { Int32(bitPattern: $0) }
+        var materialIndices = surfaces?.indices ?? []
+        return verts.withUnsafeMutableBufferPointer { vp in
+            idx.withUnsafeMutableBufferPointer { ip in
+                materialIndices.withUnsafeMutableBufferPointer { mp in
                     var md = b3MeshDef()
                     md.vertices = vp.baseAddress
                     md.indices = ip.baseAddress
+                    md.materialIndices = surfaces == nil ? nil : mp.baseAddress
                     md.vertexCount = Int32(vp.count)
                     md.triangleCount = Int32(ip.count / 3)
                     return b3CreateMesh(&md, nil, 0)
                 }
             }
-            guard let mesh else {
-                log.error("Box3D could not build a mesh from \(positions.count) vertices")
-                return nil
-            }
-            meshes.append(mesh)
-            return b3CreateMeshShape(bodyId, &def, mesh, b3Vec3(x: 1, y: 1, z: 1))
         }
     }
 
@@ -329,6 +386,8 @@ final class BodyRecord {
         meshes.removeAll()
         for f in heightFields { b3DestroyHeightField(f) }
         heightFields.removeAll()
+        for c in compounds { b3DestroyCompound(c) }
+        compounds.removeAll()
     }
 
     /// Removes duplicate points. Render meshes repeat vertices along seams and poles,
@@ -415,6 +474,7 @@ final class BodyRecord {
 
     /// Kinematic bodies only: aim at the entity's pose over one fixed step, then hold.
     func driveKinematic(fixedDt: Float) {
+        guard isEnabled else { return }
         if let target = kinematicTarget {
             b3Body_SetTargetTransform(bodyId, b3Transform(translation: target.position, rotation: target.orientation),
                                       fixedDt, true)
@@ -543,5 +603,98 @@ extension b3MotionLocks: @retroactive Equatable {
     public static func == (a: Self, b: Self) -> Bool {
         a.linearX == b.linearX && a.linearY == b.linearY && a.linearZ == b.linearZ
             && a.angularX == b.angularX && a.angularY == b.angularY && a.angularZ == b.angularZ
+    }
+}
+
+// MARK: - Baked compounds
+
+extension BodyRecord {
+    /// Bakes the body's shapes into one Box3D compound shape. Returns the shapes a compound cannot
+    /// hold, height fields and anything malformed, to add one by one.
+    fileprivate func bakeCompound(def: inout b3ShapeDef) -> [B3ShapeResource] {
+        var spheres: [b3CompoundSphereDef] = [], capsules: [b3CompoundCapsuleDef] = []
+        var hulls: [b3CompoundHullDef] = [], meshParts: [(mesh: UnsafeMutablePointer<b3MeshData>, palette: [b3SurfaceMaterial])] = []
+        var hullData: [UnsafeMutablePointer<b3HullData>] = []
+        var rest: [B3ShapeResource] = []
+        defer {
+            for h in hullData { b3DestroyHull(h) }
+            for m in meshParts { b3DestroyMesh(m.mesh) }
+        }
+        let s = scale
+        func hull(_ points: [SIMD3<Float>]) -> UnsafeMutablePointer<b3HullData>? {
+            var pts = Self.weld(points).map(b3Vec3.init)
+            for maxVertices: Int32 in [64, 48, 32, 16] {
+                if let h = b3CreateHull(&pts, Int32(pts.count), maxVertices) { return h }
+            }
+            return nil
+        }
+        for shape in collision.shapes {
+            let r = shape.rotation, t = shape.translation * s
+            let material = (shape.material ?? body.material).b3
+            switch shape.geometry {
+            case .sphere(let radius) where radius.isFinite && radius > 0:
+                spheres.append(b3CompoundSphereDef(sphere: b3Sphere(center: b3Vec3(t), radius: radius * abs(s).max()), material: material))
+            case .capsule(let height, let radius) where height.isFinite && radius.isFinite && radius > 0:
+                let half = max(height * 0.5 - radius, 0)
+                capsules.append(b3CompoundCapsuleDef(capsule: b3Capsule(center1: b3Vec3(r.act([0, -half, 0]) * s + t),
+                                                                       center2: b3Vec3(r.act([0, half, 0]) * s + t),
+                                                                       radius: radius * max(abs(s.x), abs(s.z))),
+                                                     material: material))
+            case .box(let size) where size.x.isFinite && size.y.isFinite && size.z.isFinite:
+                let e = size / 2
+                var corners: [SIMD3<Float>] = []
+                for x: Float in [-1, 1] { for y: Float in [-1, 1] { for z: Float in [-1, 1] { corners.append(r.act(e * [x, y, z]) * s + t) } } }
+                guard let h = hull(corners) else { rest.append(shape); continue }
+                hullData.append(h)
+                hulls.append(b3CompoundHullDef(hull: h, transform: b3Transform_identity, material: material))
+            case .convex(let points):
+                guard let h = hull(points.map { r.act($0) * s + t }) else { rest.append(shape); continue }
+                hullData.append(h)
+                hulls.append(b3CompoundHullDef(hull: h, transform: b3Transform_identity, material: material))
+            case .staticMesh(let positions, let indices):
+                guard positions.count >= 3, indices.count >= 3, indices.count % 3 == 0,
+                      indices.allSatisfy({ Int($0) < positions.count }),
+                      positions.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else { rest.append(shape); continue }
+                let surfaces = Self.validSurfaces(shape.triangleMaterials, triangles: indices.count / 3)
+                guard let mesh = Self.makeMesh(positions.map { r.act($0) * s + t }, indices, surfaces) else { rest.append(shape); continue }
+                meshParts.append((mesh, surfaces?.materials.map(\.b3) ?? [material]))
+            default:
+                rest.append(shape)
+            }
+        }
+        guard spheres.count + capsules.count + hulls.count + meshParts.count > 0 else { return rest }
+        // The compound clones every part, so the parts are freed when this returns.
+        // Palettes live in buffers of their own until the compound has cloned them.
+        let palettes = meshParts.map { part -> UnsafeMutableBufferPointer<b3SurfaceMaterial> in
+            let buffer = UnsafeMutableBufferPointer<b3SurfaceMaterial>.allocate(capacity: part.palette.count)
+            _ = buffer.initialize(from: part.palette)
+            return buffer
+        }
+        defer { for p in palettes { p.deallocate() } }
+        var meshDefs = zip(meshParts, palettes).map { part, palette in
+            b3CompoundMeshDef(meshData: part.mesh, transform: b3Transform_identity, scale: b3Vec3(x: 1, y: 1, z: 1),
+                              materials: UnsafePointer(palette.baseAddress), materialCount: Int32(palette.count))
+        }
+        let compound: UnsafeMutablePointer<b3CompoundData>? = spheres.withUnsafeMutableBufferPointer { sp in
+            capsules.withUnsafeMutableBufferPointer { cp in
+                hulls.withUnsafeMutableBufferPointer { hp in
+                    meshDefs.withUnsafeMutableBufferPointer { mp in
+                        var cd = b3CompoundDef()
+                        cd.spheres = sp.baseAddress; cd.sphereCount = Int32(sp.count)
+                        cd.capsules = cp.baseAddress; cd.capsuleCount = Int32(cp.count)
+                        cd.hulls = hp.baseAddress; cd.hullCount = Int32(hp.count)
+                        cd.meshes = mp.baseAddress; cd.meshCount = Int32(mp.count)
+                        return b3CreateCompound(&cd)
+                    }
+                }
+            }
+        }
+        guard let compound else {
+            log.error("Box3D could not bake a compound; adding the shapes one by one")
+            return collision.shapes
+        }
+        compounds.append(compound)
+        shapeIds.append(b3CreateBakedCompoundShape(bodyId, &def, compound))
+        return rest
     }
 }

@@ -46,6 +46,8 @@ root.addChild(box)
 - ``B3PhysicsDistanceJoint``
 - ``B3JointMotor``
 - ``B3JointSpring``
+- ``B3JointBreakLimit``
+- ``B3JointReading``
 
 - ``B3PhysicsWheelJoint``
 - ``B3PhysicsParallelJoint``
@@ -63,6 +65,9 @@ root.addChild(box)
 - ``B3ShapeResource``
 - ``B3PhysicsMaterial``
 - ``B3PhysicsMassProperties``
+- ``B3TriangleMaterials``
+- ``B3MaterialCombine``
+- ``B3Contact``
 
 ### Simulation
 
@@ -75,4 +80,5 @@ root.addChild(box)
 
 - ``B3CollisionEvents``
 - ``B3PhysicsSimulationEvents``
+- ``B3JointEvents``
 - ``B3Subscription``

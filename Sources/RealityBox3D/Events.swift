@@ -37,3 +37,15 @@ public enum B3PhysicsSimulationEvents {
     public struct WillSimulate { public let deltaTime: Float }
     public struct DidSimulate { public let deltaTime: Float }
 }
+
+/// Box3D extension: joint events.
+public enum B3JointEvents {
+    /// A joint broke: its load passed its `breakLimit`. The world has destroyed it and removed it
+    /// from the root's `B3PhysicsJointsComponent`. Force and torque are those that broke it, in the
+    /// simulation root's space.
+    public struct Broke {
+        public let joint: any B3PhysicsJoint
+        public let force: SIMD3<Float>
+        public let torque: SIMD3<Float>
+    }
+}

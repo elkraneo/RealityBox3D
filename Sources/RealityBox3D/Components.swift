@@ -122,6 +122,14 @@ public struct B3CollisionComponent: Component, Equatable, Sendable {
     /// positive one always do, whatever the filter says. Zero leaves it to the filter. A ragdoll
     /// uses one negative index so its limbs pass through each other.
     public var groupIndex: Int = 0
+    /// Box3D extension: a one-way surface, such as a platform a character jumps up through. It
+    /// pushes bodies only along this direction, in the entity's own space; bodies coming from the
+    /// other side pass through. Nil collides from every side.
+    public var oneWayDirection: SIMD3<Float>?
+    /// Box3D extension: bakes all the shapes of a static body into one compound, which collides
+    /// faster when the body has many shapes, as level geometry does. Static bodies only; height
+    /// fields stay separate shapes. Changing anything rebakes it.
+    public var bakesCompound: Bool = false
 
     public init(shapes: [B3ShapeResource], mode: Mode = .default, filter: CollisionFilter = .default) {
         self.shapes = shapes
@@ -167,6 +175,12 @@ public struct B3PhysicsSimulationComponent: Component, Equatable, Sendable {
     /// Approach speed above which collisions bounce, in the root's units per second.
     /// Nil keeps Box3D's default of 1 m/s, scaled by `RealityBox3D.lengthUnitsPerMeter`.
     public var restitutionThreshold: Float?
+    /// Box3D extension: how two touching materials' frictions combine. Box3D's default is the
+    /// geometric mean; RealityKit's PhysX default is the average.
+    public var frictionCombine: B3MaterialCombine = .geometricMean
+    /// Box3D extension: how two touching materials' restitutions combine. Box3D's default is the
+    /// larger one.
+    public var restitutionCombine: B3MaterialCombine = .maximum
 
     public init() {}
 

@@ -15,10 +15,13 @@ public protocol B3PhysicsJoint: Equatable {
     var checksForInternalCollisions: Bool { get }
     /// Box3D extension: stiffness of the joint's own constraint in hertz. Nil keeps Box3D's default.
     var constraintHertz: Float? { get }
+    /// Box3D extension: the force or torque at which the joint breaks. Nil never breaks.
+    var breakLimit: B3JointBreakLimit? { get }
 }
 
 extension B3PhysicsJoint {
     public var constraintHertz: Float? { nil }
+    public var breakLimit: B3JointBreakLimit? { nil }
 
     /// Mirrors RealityKit's `addToSimulation()`: appends the joint to the joints component of the
     /// simulation root above `pin0`'s entity, and returns that root.
@@ -43,6 +46,16 @@ extension B3PhysicsJoint {
 public enum B3JointError: Error {
     /// The pins' entities are not under an entity with a `B3PhysicsSimulationComponent`.
     case noSimulationRoot
+}
+
+/// Box3D extension: the load at which a joint breaks. When the force or the torque its constraint
+/// applies exceeds a limit, the world removes the joint from the root's `B3PhysicsJointsComponent`
+/// and sends `B3JointEvents.Broke`. Newtons and newton-meters when the simulation root is in
+/// meters; in general, the root's units, like forces given relative to the root.
+public struct B3JointBreakLimit: Equatable, Sendable {
+    public var force: Float?
+    public var torque: Float?
+    public init(force: Float? = nil, torque: Float? = nil) { self.force = force; self.torque = torque }
 }
 
 /// Box3D extension: drives a joint at a speed, up to a maximum torque or force. A motor with speed
@@ -76,6 +89,7 @@ public struct B3PhysicsRevoluteJoint: B3PhysicsJoint {
     public var motor: B3JointMotor?
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, angularLimit: ClosedRange<Float>? = nil,
                 checksForInternalCollisions: Bool = false, motor: B3JointMotor? = nil, spring: B3JointSpring? = nil,
@@ -95,6 +109,7 @@ public struct B3PhysicsPrismaticJoint: B3PhysicsJoint {
     public var motor: B3JointMotor?
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, linearLimit: ClosedRange<Float>? = nil,
                 checksForInternalCollisions: Bool = false, motor: B3JointMotor? = nil, spring: B3JointSpring? = nil,
@@ -120,6 +135,7 @@ public struct B3PhysicsSphericalJoint: B3PhysicsJoint {
     /// Box3D extension: a motor at rest, with this maximum torque, acting as joint friction.
     public var friction: Float?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, angularLimitInYZ: (Float, Float)? = nil,
                 checksForInternalCollisions: Bool = false, twistLimit: ClosedRange<Float>? = nil,
@@ -133,7 +149,7 @@ public struct B3PhysicsSphericalJoint: B3PhysicsJoint {
         a.pin0 == b.pin0 && a.pin1 == b.pin1 && a.angularLimitInYZ?.0 == b.angularLimitInYZ?.0
             && a.angularLimitInYZ?.1 == b.angularLimitInYZ?.1 && a.twistLimit == b.twistLimit
             && a.checksForInternalCollisions == b.checksForInternalCollisions && a.spring == b.spring
-            && a.friction == b.friction && a.constraintHertz == b.constraintHertz
+            && a.friction == b.friction && a.constraintHertz == b.constraintHertz && a.breakLimit == b.breakLimit
     }
 }
 
@@ -146,6 +162,7 @@ public struct B3PhysicsFixedJoint: B3PhysicsJoint {
     public var linearSpring: B3JointSpring?
     public var angularSpring: B3JointSpring?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, linearSpring: B3JointSpring? = nil,
                 angularSpring: B3JointSpring? = nil, constraintHertz: Float? = nil) {
@@ -164,6 +181,7 @@ public struct B3PhysicsDistanceJoint: B3PhysicsJoint {
     /// Box3D extension: a spring toward `target` meters, within the limit.
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, distanceLimit: ClosedRange<Float>,
                 checksForInternalCollisions: Bool = false, spring: B3JointSpring? = nil, constraintHertz: Float? = nil) {
@@ -195,6 +213,7 @@ public struct B3PhysicsWheelJoint: B3PhysicsJoint {
     public var spinMotor: B3JointMotor?
     public var steering: Steering?
     public var constraintHertz: Float?
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, suspension: B3JointSpring? = nil, suspensionLimit: ClosedRange<Float>? = nil,
                 spinMotor: B3JointMotor? = nil, steering: Steering? = nil, checksForInternalCollisions: Bool = false,
@@ -215,6 +234,7 @@ public struct B3PhysicsParallelJoint: B3PhysicsJoint {
     /// Newton-meters; nil for Box3D's default.
     public var maxTorque: Float?
     public var constraintHertz: Float? { nil }
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, spring: B3JointSpring, maxTorque: Float? = nil,
                 checksForInternalCollisions: Bool = false) {
@@ -238,6 +258,7 @@ public struct B3PhysicsMotorJoint: B3PhysicsJoint {
     public var angularSpring: B3JointSpring?
     public var maxSpringTorque: Float
     public var constraintHertz: Float? { nil }
+    public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, linearVelocity: SIMD3<Float> = .zero, maxForce: Float = 0,
                 angularVelocity: SIMD3<Float> = .zero, maxTorque: Float = 0, linearSpring: B3JointSpring? = nil,
@@ -368,6 +389,8 @@ extension B3World {
 
     /// Applies a joint's parameters through Box3D's setters. False if a change needs a rebuild.
     private func update(_ id: b3JointId, to joint: any B3PhysicsJoint) -> Bool {
+        b3Joint_SetForceThreshold(id, joint.breakLimit?.force ?? .greatestFiniteMagnitude)
+        b3Joint_SetTorqueThreshold(id, joint.breakLimit?.torque ?? .greatestFiniteMagnitude)
         switch joint {
         case let j as B3PhysicsRevoluteJoint:
             b3RevoluteJoint_EnableLimit(id, j.angularLimit != nil)
@@ -497,6 +520,9 @@ extension B3World {
             }
             d.collideConnected = joint.checksForInternalCollisions
             if let h = joint.constraintHertz { d.constraintHertz = h }
+            // Box3D reports a joint whose load passes these; the world then breaks it.
+            d.forceThreshold = joint.breakLimit?.force ?? .greatestFiniteMagnitude
+            d.torqueThreshold = joint.breakLimit?.torque ?? .greatestFiniteMagnitude
         }
         switch joint {
         case let j as B3PhysicsRevoluteJoint:
@@ -628,7 +654,7 @@ extension B3World {
     }
 
     /// Destroys anchors no joint uses any more.
-    private func pruneAnchors() {
+    func pruneAnchors() {
         let used = Set(jointSlots.compactMap { $0.resolved }.flatMap { [$0.bodyA, $0.bodyB] })
         for (key, anchor) in anchors where !used.contains(anchor.bodyId) {
             if b3Body_IsValid(anchor.bodyId) { b3DestroyBody(anchor.bodyId) }
@@ -674,7 +700,7 @@ extension B3World {
         b3Joint_WakeBodies(id)
     }
 
-    private func jointId(of joint: any B3PhysicsJoint) -> b3JointId? {
+    func jointId(of joint: any B3PhysicsJoint) -> b3JointId? {
         guard let index = appliedJoints?.joints.firstIndex(where: { $0.isEqual(to: joint) }), index < jointSlots.count,
               let id = jointSlots[index].id, b3Joint_IsValid(id) else { return nil }
         return id

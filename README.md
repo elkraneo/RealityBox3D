@@ -81,6 +81,12 @@ if let forecast = world.forecast() {
 | `scene.raycast`, `scene.convexCast` | `world.raycast`, `world.convexCast` |
 | — | `world.overlaps(of:at:margin:)`: which bodies a shape placed here would touch |
 | — | `world.forecast()`: an exact copy of the world to step ahead |
+| — | `joint.breakLimit`, `B3JointEvents.Broke`, `world.constraintForce(of:)`, `world.reading(of:)`: breakable joints and live joint state |
+| — | `B3CollisionComponent.oneWayDirection`: one-way platforms |
+| — | `frictionCombine`, `restitutionCombine`: how touching materials mix, PhysX's average included |
+| — | `world.explode(at:radius:impulsePerArea:)` |
+| — | `B3ShapeResource.material`, per-triangle `B3TriangleMaterials`, `bakesCompound` for static level geometry |
+| — | `entity.b3.contacts`, `overlappingEntities`, `applyWind(_:)` |
 
 `PhysicsBodyMode`, `CollisionFilter`, `CollisionGroup` and `GeometricPin` are RealityKit's own
 types. Joints follow RealityKit's axes: revolute joints turn and prismatic joints slide along the
@@ -88,6 +94,9 @@ pins' x-axis, and `joint.addToSimulation()` adds them to the simulation root. A 
 joint follows the skeleton's animation; RealityKit resolves such pins only for entities in a
 running scene, so they do not attach in a headless `B3World`. The body and
 collision components stay separate, as in RealityKit, because Box3D bodies take several shapes.
+
+Disabling an entity takes its body, and the bodies below it, out of the simulation, as RealityKit
+does; enabled again, a body continues with the state it had.
 
 ## Samples
 
@@ -187,6 +196,9 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
 - Triangle meshes collide only on static bodies, a Box3D rule.
 - Box3D hulls have at most 128 faces and 128 edges, so rounded hulls are simplified to fit.
 - Box3D's length unit is process-wide, not per world.
+- One-way surfaces judge each contact by its normal alone: a body pushed sideways into a
+  platform's edge from below can be lifted onto it.
+- Forecasts do not break joints, and explosions push spheres, capsules and hulls, not meshes.
 - The apps run on macOS. The library builds for iOS and visionOS but has not run on a device.
 
 ## License

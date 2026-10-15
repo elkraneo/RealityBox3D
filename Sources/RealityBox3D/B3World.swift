@@ -22,6 +22,13 @@ public final class B3World {
     var jointSlots: [JointSlot] = []
     var appliedJoints: B3PhysicsJointsComponent?
     var anchors: [Entity.ID: JointAnchor] = [:]
+    /// Joints Box3D found over their break limit this frame, destroyed already, removed from the
+    /// joints component at the end of the frame.
+    var brokenJoints: [(slot: Int, force: SIMD3<Float>, torque: SIMD3<Float>)] = []
+    var jointBreakHandlers: [UUID: (B3JointEvents.Broke) -> Void] = [:]
+    /// One-way shapes, read by Box3D's pre-solve callback, and the bodies that own them.
+    let oneWayShapes = OneWayShapes()
+    var oneWayRecords: [Entity.ID: BodyRecord] = [:]
     /// Kinematic bodies, driven toward their entity's pose every fixed step.
     private var kinematic: [Entity.ID: BodyRecord] = [:]
     /// Dynamic bodies that moved in the latest step, or need one more write to settle.
@@ -49,6 +56,8 @@ public final class B3World {
         def.workerCount = UInt32(max(1, settings.workerCount))
         if let r = settings.restitutionThreshold { def.restitutionThreshold = r }
         self.id = b3CreateWorld(&def)
+        b3World_SetPreSolveCallback(id, OneWayShapes.preSolve, Unmanaged.passUnretained(oneWayShapes).toOpaque())
+        applyContactRules(settings)
         // Lets `entity.b3` find worlds the system does not own.
         if registersStandalone { B3WorldRegistry.shared.registerStandalone(self, root: root) }
     }
@@ -138,17 +147,22 @@ public final class B3World {
                 record.apply(body: body, collision: collision, scale: pose.scale)
             }
             record.syncInbound(pose: pose, motion: motion)
+            record.setEnabled(entity.isEnabledInHierarchy)
         } else {
             let record = BodyRecord(world: self, entity: entity, body: body, collision: collision, pose: pose, motion: motion)
             records[entity.id] = record
             if record.isNested { nestedBodyCount += 1 }
             bodyModeChanged(record)
+            record.setEnabled(entity.isEnabledInHierarchy)
         }
         return true
     }
 
     private func remove(_ key: Entity.ID, _ record: BodyRecord) {
         if record.isNested { nestedBodyCount -= 1 }
+        if oneWayRecords.removeValue(forKey: key) != nil {
+            for s in record.shapeIds { oneWayShapes.directions[s] = nil }
+        }
         record.destroy()
         records[key] = nil
         kinematic[key] = nil
@@ -158,6 +172,7 @@ public final class B3World {
     private func finishFrame(deltaTime: Double, inboundStart t0: ContinuousClock.Instant) {
         readAnchors()
         syncJoints()
+        refreshOneWayShapes()
         let root = self.root
         let fixedDt = 1.0 / settings.fixedRate
 
@@ -179,7 +194,9 @@ public final class B3World {
         writeActive(alpha: alpha, root: root)
 
         // Events after poses are final, so handlers see consistent transforms.
+        let broken = finishJointBreaks()
         dispatch(events)
+        dispatch(broken)
 
         let t3 = ContinuousClock.now
         statistics = B3Statistics(bodies: records.count, awakeBodies: awakeBodyCount, steps: steps,
@@ -242,9 +259,11 @@ public final class B3World {
 
     /// Advances one fixed step, whatever the accumulator says. For paused stepping and tools.
     public func step(events: inout [any B3CollisionEvent]) {
+        refreshOneWayShapes()
         step(fixedDt: Float(1.0 / settings.fixedRate), events: &events)
         frames.removeAll(keepingCapacity: true)
         writeActive(alpha: 1, root: root)
+        dispatch(finishJointBreaks())
     }
 
     private func step(fixedDt: Float, events: inout [any B3CollisionEvent]) {
@@ -263,6 +282,7 @@ public final class B3World {
             active[key] = r
         }
         collectEvents(into: &events)
+        collectJointBreaks()
         retiredShapes.removeAll(keepingCapacity: true)
         for h in didSimulate.values { h(.init(deltaTime: fixedDt)) }
     }
@@ -309,6 +329,9 @@ public final class B3World {
         b3World_EnableContinuous(id, s.isContinuousEnabled)
         b3World_SetWorkerCount(id, Int32(max(1, s.workerCount)))
         b3World_SetRestitutionThreshold(id, s.restitutionThreshold ?? b3DefaultWorldDef().restitutionThreshold)
+        if s.frictionCombine != settings.frictionCombine || s.restitutionCombine != settings.restitutionCombine {
+            applyContactRules(s)
+        }
         settings = s
     }
 
