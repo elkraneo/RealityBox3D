@@ -74,7 +74,8 @@ final class DemoModel {
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-            self?.handle(event) ?? event
+            guard let self else { return event }
+            return self.handle(event) // nil when it used the key
         }
         // A key released while another window or app has focus never arrives: forget them all.
         let center = NotificationCenter.default

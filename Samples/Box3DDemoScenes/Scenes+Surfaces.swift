@@ -41,8 +41,8 @@ extension DemoScene {
             // Upstream's gusts: the direction wanders by noise eased toward a random offset
             final class Weather { var wind: SIMD3<Float> = [6, 0, 0]; var noise: SIMD3<Float> = .zero; var random = SeededRandom(seed: 7) }
             let weather = Weather()
-            b.onFrame { ctx in
-                guard ctx.deltaTime > 0 else { return }
+            // Box3D's wind is a force for one step: apply it before every step, not every frame
+            b.onFixedStep { ctx in
                 let speed = simd_length(weather.wind)
                 let gust = speed > 0 ? speed * (weather.wind / speed + weather.noise) : .zero
                 for link in links { link.b3.applyWind(gust, drag: 1, lift: 0.75, maxSpeed: 10) }
@@ -76,10 +76,12 @@ extension DemoScene {
             let axis = pinOrientation(box3DFrame: simd_quatf(from: [0, 0, 1], to: [0, 1, 0]))
             var hinges: [B3PhysicsRevoluteJoint] = []
             for (name, y) in [("lower", Float(0)), ("upper", 3)] {
-                hinges.append(B3PhysicsRevoluteJoint(pin0: b.anchor(name, at: [-0.75, y, 0], orientation: axis),
+                var hinge = B3PhysicsRevoluteJoint(pin0: b.anchor(name, at: [-0.75, y, 0], orientation: axis),
                                                      pin1: door.pins.set(named: name, position: [-0.75, y - 1.5, 0], orientation: axis),
                                                      angularLimit: -(.pi / 2)...(.pi / 2), spring: B3JointSpring(hertz: 1, dampingRatio: 0.5),
-                                                     constraintHertz: 120))
+                                                     constraintHertz: 120)
+                hinge.constraintDampingRatio = 0
+                hinges.append(hinge)
             }
             b.joints = hinges
             b.action("Impulse") { _ in

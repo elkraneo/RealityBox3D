@@ -79,7 +79,7 @@ if let forecast = world.forecast() {
 | — | `B3PhysicsWheelJoint`, `B3PhysicsParallelJoint`, `B3PhysicsMotorJoint`, `B3PhysicsFilterJoint` |
 | `CharacterControllerComponent`, `moveCharacter(by:deltaTime:relativeTo:)` | `B3CharacterControllerComponent`, `entity.b3.moveCharacter(…)`, on Box3D's geometric mover |
 | — | `B3CharacterObstacleComponent`: soft obstacles (a push limit), shapes the sweep passes, bodies the character cannot push; `clippedVelocity` in the state; `moveCharacter(by:correction:…)` for positional corrections that are not motion |
-| — | `B3PhysicsMaterial.tangentVelocity`: conveyor belts |
+| — | `B3PhysicsMaterial.tangentVelocity`: conveyor belts; `joint.constraintHertz`, `joint.constraintDampingRatio`: constraint stiffness |
 | `scene.raycast`, `scene.convexCast` | `world.raycast`, `world.convexCast` |
 | — | `world.overlaps(of:at:margin:)`: which bodies a shape placed here would touch |
 | — | `world.forecast()`: an exact copy of the world to step ahead |

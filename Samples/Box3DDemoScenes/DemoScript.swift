@@ -30,6 +30,9 @@ public struct DemoInput: Equatable, Sendable {
 @MainActor
 public final class DemoScript {
     var onFrame: [@MainActor (DemoContext) -> Void] = []
+    var onFixedStep: [@MainActor (DemoContext) -> Void] = []
+    private var stepSubscription: B3Subscription?
+    private weak var subscribedWorld: B3World?
     var actions: [String: @MainActor (DemoContext) -> Void] = [:]
     var time: Double = 0
     /// Scratch storage for one-shot work in `onFrame`.
@@ -44,6 +47,15 @@ public final class DemoScript {
 
     func frame(root: Entity, world: B3World?, deltaTime: Double) {
         let ctx = DemoContext(root: root, world: world, time: time, deltaTime: deltaTime, input: input, cameraForward: cameraForward)
+        // Fixed-step code runs inside the world's steps, before each one, as upstream's Step()
+        if !onFixedStep.isEmpty, let world, world !== subscribedWorld {
+            subscribedWorld = world
+            stepSubscription = world.subscribe(to: B3PhysicsSimulationEvents.WillSimulate.self) { [unowned self, unowned root, unowned world] event in
+                let ctx = DemoContext(root: root, world: world, time: self.time, deltaTime: Double(event.deltaTime),
+                                      input: self.input, cameraForward: self.cameraForward)
+                for f in self.onFixedStep { f(ctx) }
+            }
+        }
         for f in onFrame { f(ctx) }
         time += deltaTime
     }

@@ -2,6 +2,7 @@ import Testing
 import RealityKit
 import simd
 import CBox3D
+@testable import Box3DDemoScenes
 @testable import RealityBox3D
 
 /// One test per finding of the adversarial review, so each fix stays fixed.
@@ -482,6 +483,53 @@ import CBox3D
         let spin = e.b3.angularVelocity!
         #expect(spin.x.isFinite && spin.y.isFinite && spin.z.isFinite, "spin \(spin)")
         #expect(spin.x > 0 && abs(spin.y) < 1e-6 && abs(spin.z) < 1e-6, "spin \(spin)")
+    }
+
+    /// Moving a shape's offset or changing the body type resolves the mass again; the center of
+    /// mass keeps its velocities instead of gaining ω × Δcenter.
+    @Test(arguments: [false, true]) func editsKeepTheCentersVelocity(changesMode: Bool) {
+        let r = root()
+        let e = body(r, [B3ShapeResource.generateBox(size: [0.5, 0.5, 0.5]).offsetBy(translation: [0, 2, 0])],
+                     mode: changesMode ? .kinematic : .dynamic)
+        var s = r.components[B3PhysicsSimulationComponent.self]!
+        s.gravity = .zero
+        r.components.set(s)
+        e.components.set(B3PhysicsMotionComponent(linearVelocity: [1, 0, 0], angularVelocity: [0, 0, 3]))
+        let w = world(r)
+        w.update(entities: [e], deltaTime: 0)
+        if changesMode {
+            e.components[B3PhysicsBodyComponent.self]?.mode = .dynamic
+        } else {
+            e.components[B3CollisionComponent.self]?.shapes = [B3ShapeResource.generateBox(size: [0.5, 0.5, 0.5]).offsetBy(translation: [0, 3, 0])]
+        }
+        w.update(entities: [e], deltaTime: 0)
+        let id = w.record(for: e)!.bodyId
+        #expect(simd_distance(b3Body_GetLinearVelocity(id).simd, [1, 0, 0]) < 1e-4, "\(b3Body_GetLinearVelocity(id).simd)")
+        #expect(simd_distance(b3Body_GetAngularVelocity(id).simd, [0, 0, 3]) < 1e-4)
+    }
+
+    /// A belt started under sleeping cargo carries it.
+    @Test func startingABeltWakesItsCargo() {
+        let r = root()
+        let belt = body(r, [.generateBox(size: [20, 0.5, 4])], mode: .static)
+        let crate = body(r, [.generateBox(size: [1, 1, 1])], at: [0, 0.75, 0])
+        let w = world(r)
+        frames(w, [belt, crate], 240)
+        #expect(!crate.b3.isAwake, "cargo should have slept")
+        belt.components[B3PhysicsBodyComponent.self]?.material.tangentVelocity = [2, 0, 0]
+        frames(w, [belt, crate], 60)
+        #expect(crate.position.x > 1, "cargo at \(crate.position)")
+    }
+
+    /// Wind goes through WillSimulate in the scene, so its push does not depend on the frame rate.
+    @Test func windIsFrameRateIndependent() {
+        func tip(fps: Double) -> SIMD3<Float> {
+            let runner = DemoRunner(DemoScene.named("Wind")!) { $0.maxStepsPerFrame = 8 }
+            runner.advance(frames: Int(2 * fps), deltaTime: 1 / fps)
+            return runner.root.children[0].children.first { $0.name == "link9" }!.position
+        }
+        let base = tip(fps: 60)
+        for fps in [15.0, 120] { #expect(simd_distance(tip(fps: fps), base) < 0.05, "\(fps) fps tip \(tip(fps: fps)), 60 fps \(base)") }
     }
 
     /// A motion component's velocities are the center of mass's, at creation as on later edits:

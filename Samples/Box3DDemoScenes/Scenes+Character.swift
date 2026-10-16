@@ -111,17 +111,12 @@ enum GeometricMover {
 
         let mover = Mover()
         let slabTimer = SettleTimer(), treeTimer = SettleTimer()
-        b.onFrame { ctx in
-            guard ctx.deltaTime > 0, let world = ctx.world else { return }
-            // Upstream moves once per 60 Hz step. Long frames take several moves, up to the four
-            // fixed steps the physics takes at most per frame, so the character keeps pace with it.
-            var remaining = Float(min(ctx.deltaTime, 4.0 / 60))
-            let dt = remaining
-            while remaining > 1e-5 {
-                let step = min(remaining, 1.0 / 60)
-                mover.step(character, world: world, root: ctx.root, input: ctx.input, forward: ctx.cameraForward, dt: step)
-                remaining -= step
-            }
+        // Upstream moves once per step, before it: so does this, interleaved with the physics at
+        // any frame rate
+        b.onFixedStep { ctx in
+            guard let world = ctx.world else { return }
+            let dt = Float(ctx.deltaTime)
+            mover.step(character, world: world, root: ctx.root, input: ctx.input, forward: ctx.cameraForward, dt: dt)
             // Not upstream's: walking off the level's edge starts over
             if character.position.y < -20 { mover.reset(character) }
             if slabTimer.settled(slab, dt: dt) {

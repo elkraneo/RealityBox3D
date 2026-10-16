@@ -99,6 +99,12 @@ public struct DemoBuilder {
         scriptObject().onFrame.append(body)
     }
 
+    /// Code run before every fixed physics step, with that step's `deltaTime`, for forces and
+    /// anything that must keep pace with the simulation whatever the frame rate.
+    public mutating func onFixedStep(_ body: @escaping @MainActor (DemoContext) -> Void) {
+        scriptObject().onFixedStep.append(body)
+    }
+
     /// Makes the app's camera follow an entity.
     public mutating func follow(_ entity: Entity) {
         scriptObject().follow = entity

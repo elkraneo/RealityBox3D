@@ -15,12 +15,15 @@ public protocol B3PhysicsJoint: Equatable {
     var checksForInternalCollisions: Bool { get }
     /// Box3D extension: stiffness of the joint's own constraint in hertz. Nil keeps Box3D's default.
     var constraintHertz: Float? { get }
+    /// Box3D extension: damping ratio of the joint's own constraint. Nil keeps Box3D's default.
+    var constraintDampingRatio: Float? { get }
     /// Box3D extension: the force or torque at which the joint breaks. Nil never breaks.
     var breakLimit: B3JointBreakLimit? { get }
 }
 
 extension B3PhysicsJoint {
     public var constraintHertz: Float? { nil }
+    public var constraintDampingRatio: Float? { nil }
     public var breakLimit: B3JointBreakLimit? { nil }
 
     /// Mirrors RealityKit's `addToSimulation()`: appends the joint to the joints component of the
@@ -89,6 +92,7 @@ public struct B3PhysicsRevoluteJoint: B3PhysicsJoint {
     public var motor: B3JointMotor?
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, angularLimit: ClosedRange<Float>? = nil,
@@ -109,6 +113,7 @@ public struct B3PhysicsPrismaticJoint: B3PhysicsJoint {
     public var motor: B3JointMotor?
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, linearLimit: ClosedRange<Float>? = nil,
@@ -135,6 +140,7 @@ public struct B3PhysicsSphericalJoint: B3PhysicsJoint {
     /// Box3D extension: a motor at rest, with this maximum torque, acting as joint friction.
     public var friction: Float?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, angularLimitInYZ: (Float, Float)? = nil,
@@ -149,7 +155,8 @@ public struct B3PhysicsSphericalJoint: B3PhysicsJoint {
         a.pin0 == b.pin0 && a.pin1 == b.pin1 && a.angularLimitInYZ?.0 == b.angularLimitInYZ?.0
             && a.angularLimitInYZ?.1 == b.angularLimitInYZ?.1 && a.twistLimit == b.twistLimit
             && a.checksForInternalCollisions == b.checksForInternalCollisions && a.spring == b.spring
-            && a.friction == b.friction && a.constraintHertz == b.constraintHertz && a.breakLimit == b.breakLimit
+            && a.friction == b.friction && a.constraintHertz == b.constraintHertz
+            && a.constraintDampingRatio == b.constraintDampingRatio && a.breakLimit == b.breakLimit
     }
 }
 
@@ -162,6 +169,7 @@ public struct B3PhysicsFixedJoint: B3PhysicsJoint {
     public var linearSpring: B3JointSpring?
     public var angularSpring: B3JointSpring?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, linearSpring: B3JointSpring? = nil,
@@ -181,6 +189,7 @@ public struct B3PhysicsDistanceJoint: B3PhysicsJoint {
     /// Box3D extension: a spring toward `target` meters, within the limit.
     public var spring: B3JointSpring?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, distanceLimit: ClosedRange<Float>,
@@ -213,6 +222,7 @@ public struct B3PhysicsWheelJoint: B3PhysicsJoint {
     public var spinMotor: B3JointMotor?
     public var steering: Steering?
     public var constraintHertz: Float?
+    public var constraintDampingRatio: Float?
     public var breakLimit: B3JointBreakLimit?
 
     public init(pin0: GeometricPin, pin1: GeometricPin, suspension: B3JointSpring? = nil, suspensionLimit: ClosedRange<Float>? = nil,
@@ -385,6 +395,7 @@ extension B3World {
     private func samePinsAndType(_ a: any B3PhysicsJoint, _ b: any B3PhysicsJoint) -> Bool {
         type(of: a) == type(of: b) && a.pin0 == b.pin0 && a.pin1 == b.pin1
             && a.checksForInternalCollisions == b.checksForInternalCollisions && a.constraintHertz == b.constraintHertz
+            && a.constraintDampingRatio == b.constraintDampingRatio
     }
 
     /// Applies a joint's parameters through Box3D's setters. False if a change needs a rebuild.
@@ -520,6 +531,7 @@ extension B3World {
             }
             d.collideConnected = joint.checksForInternalCollisions
             if let h = joint.constraintHertz { d.constraintHertz = h }
+            if let z = joint.constraintDampingRatio { d.constraintDampingRatio = z }
             // Box3D reports a joint whose load passes these; the world then breaks it.
             d.forceThreshold = joint.breakLimit?.force ?? .greatestFiniteMagnitude
             d.torqueThreshold = joint.breakLimit?.torque ?? .greatestFiniteMagnitude

@@ -130,6 +130,10 @@ final class BodyRecord {
     func apply(body new: B3PhysicsBodyComponent, collision newCollision: B3CollisionComponent, scale newScale: SIMD3<Float>) {
         let old = body
         body = new
+        // Box3D shifts a body's velocity by ω × Δcenter whenever its mass is resolved again, here
+        // by new shapes, densities or a new type: the center of mass keeps its velocities instead.
+        // A disabled body reads zero in Box3D; it keeps its own copy for re-enabling.
+        let kept = isEnabled ? (b3Body_GetLinearVelocity(bodyId), b3Body_GetAngularVelocity(bodyId)) : nil
 
         // Compounds, height fields and meshes belong to static bodies: Box3D refuses to change the
         // type of a body holding the first two, locking its world, and cannot push meshes. They go
@@ -163,6 +167,9 @@ final class BodyRecord {
             || newCollision.bakesCompound != collision.bakesCompound
             || rebuildsForMode
             || (new.material != old.material && newCollision.bakesCompound) // a compound's materials are baked
+            // A new belt speed must reach bodies already resting on the belt, maybe asleep: new
+            // shapes drop the old contacts and wake them
+            || new.material.tangentVelocity != old.material.tangentVelocity
         let oldCollision = collision
         collision = newCollision
         scale = newScale
@@ -193,6 +200,10 @@ final class BodyRecord {
                 }
                 updateMass()
             }
+        }
+        if let kept, new.mode != .static {
+            b3Body_SetLinearVelocity(bodyId, kept.0)
+            b3Body_SetAngularVelocity(bodyId, kept.1)
         }
         b3Body_SetAwake(bodyId, true)
     }
