@@ -587,11 +587,11 @@ final class BodyRecord {
     func addForce(_ f: SIMD3<Float>, at point: SIMD3<Float>?) {
         if let point { b3Body_ApplyForce(bodyId, b3Vec3(f), b3Vec3(point), true) }
         else { b3Body_ApplyForceToCenter(bodyId, b3Vec3(f), true) }
-        world.recordForce(.force(bodyId, f, at: point))
+        if world.keepsForces { world.pendingForces.add(force: f, at: point, to: bodyId) }
     }
     func addTorque(_ t: SIMD3<Float>) {
         b3Body_ApplyTorque(bodyId, b3Vec3(t), true)
-        world.recordForce(.torque(bodyId, t))
+        if world.keepsForces { world.pendingForces.add(torque: t, to: bodyId) }
     }
     func applyLinearImpulse(_ i: SIMD3<Float>, at point: SIMD3<Float>?) {
         if let point { b3Body_ApplyLinearImpulse(bodyId, b3Vec3(i), b3Vec3(point), true) }

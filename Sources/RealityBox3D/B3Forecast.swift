@@ -61,7 +61,8 @@ extension B3World {
             slop: 0.005 * b3GetLengthUnitsPerMeter()) : nil
         return B3Forecast(player: player, worldId: copy, bodies: bodies, kinematics: kinematics,
                           timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount),
-                          oneWay: oneWay, oneWaySources: sources, impacts: impacts)
+                          oneWay: oneWay, oneWaySources: sources, impacts: impacts,
+                          pendingForces: impacts == nil ? PendingForces() : pendingForces.copied(to: copy.index1 &- 1))
     }
 }
 
@@ -81,10 +82,14 @@ public final class B3Forecast {
     private let oneWaySources: [OneWayShapes.Source]
     struct Impacts { let shapes: [b3ShapeId]; let threshold: Float; let combine: B3MaterialCombine; let slop: Float }
     private let impacts: Impacts?
+    /// Forces applied to the source world before the copy, for its first step's later substeps.
+    private let pendingForces: PendingForces
 
     init(player: OpaquePointer, worldId: b3WorldId, bodies: [Entity.ID: b3BodyId], kinematics: [Kinematic],
-         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes, oneWaySources: [OneWayShapes.Source], impacts: Impacts?) {
+         timeStep: Float, subSteps: Int32, oneWay: OneWayShapes, oneWaySources: [OneWayShapes.Source], impacts: Impacts?,
+         pendingForces: PendingForces) {
         self.impacts = impacts
+        self.pendingForces = pendingForces
         self.oneWay = oneWay
         self.oneWaySources = oneWaySources
         self.player = player
@@ -110,11 +115,14 @@ public final class B3Forecast {
             }
             if let impacts {
                 let parts = max(subSteps, 1), dt = timeStep / Float(parts)
-                for _ in 0..<parts {
+                for part in 0..<parts {
+                    // The snapshot holds the forces for the first substep; the rest get them again.
+                    if stepCount == 0, part > 0 { pendingForces.apply() }
                     if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
                     SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes), dt: dt,
                                               threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop,
-                                              oneWay: oneWaySources.isEmpty ? nil : oneWay)
+                                              oneWay: oneWaySources.isEmpty ? nil : oneWay,
+                                              moverSpeed: SequentialImpacts.moverSpeed(of: impacts.shapes))
                     b3World_Step(worldId, dt, 1)
                 }
             } else {

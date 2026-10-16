@@ -9,7 +9,7 @@ lift 2  RealityKit     11.9  11.9  12.3  14.3  14.3   far 14.3 / 14.3, worst oth
 lift 3  RealityBox3D    0.1   0.1  30.0  30.0  30.0   far 30.0 / 30.0 / 30.0, worst other 0.1  pass
 lift 3  SDFPhysics      0.4   0.9  29.0  29.9  30.5   far 29.0 / 29.9 / 30.5, worst other 0.9  pass
 lift 3  RealityKit     17.7  17.7  17.7  17.9  17.9   far 17.7 / 17.9 / 17.9, worst other 17.7  FAIL
-push    RealityBox3D    0.0   0.3   0.3   0.3  48.4   far 48.4, worst other 0.3  pass
+push    RealityBox3D    0.0   0.0   0.0   0.7  48.4   far 48.4, worst other 0.7  pass
 push    SDFPhysics      0.1   0.2   0.2   0.2  48.0   far 48.0, worst other 0.2  pass
 push    RealityKit     -0.3  30.5  24.3  24.3  24.3   far 24.3, worst other 30.5  FAIL
 

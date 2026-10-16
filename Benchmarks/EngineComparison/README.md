@@ -63,7 +63,7 @@ first ball with Apple's impulse; and send a free row of five balls, awake and as
 | Lift 1 | ball 5 out, others still | 30.0°, others ≤ 0.0° | 29.8°, others ≤ 0.1° | all five 5.9–7.7° |
 | Lift 2 | balls 4–5 out | 30.0° / 30.0°, others ≤ 0.1° | 29.4° / 30.1°, others ≤ 0.3° | all five 11.9–14.3° |
 | Lift 3 | balls 3–5 out | 30.0° / 30.0° / 30.0°, others ≤ 0.1° | 29.0° / 29.9° / 30.5°, others ≤ 0.9° | all five 17.7–17.9° |
-| Push | ball 1 to 48°, then ball 5 out | ball 5 48.4°, balls 2–4 ≤ 0.3° | ball 5 48.0°, balls 2–4 ≤ 0.2° | balls 2–5 swing, ball 2 to 30.5° |
+| Push | ball 1 to 48°, then ball 5 out | ball 5 48.4°, balls 2–4 ≤ 0.7° | ball 5 48.0°, balls 2–4 ≤ 0.2° | balls 2–5 swing, ball 2 to 30.5° |
 | Free row, awake or asleep | last ball 1.000 m/s, the rest 0 | 1.000, the rest 0.000 | 1.000, the rest 0.000 | −0.630, 0.367, 0.416, 0.416, 0.432 |
 
 Box3D's solver alone shares momentum like RealityKit's (one ball in sends three out at 12°);

@@ -141,4 +141,106 @@ import CBox3D
         for _ in 0..<3 { w.update(entities: [cube, ball], deltaTime: 1.0 / 60) }
         #expect(abs(cube.b3.angularVelocity?.z ?? 0) > 1, "spin \(cube.b3.angularVelocity ?? .zero)")
     }
+
+    // Balls meeting off center push each other through their centers: no spin from the pass.
+    @Test func offCenterImpactsDontSpin() {
+        let r = root()
+        let a = body(r, .generateSphere(radius: 0.1), at: [-0.25, 0.1, 0], velocity: [6, 0, 0])
+        let b = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let w = world(r)
+        for _ in 0..<3 { w.update(entities: [a, b], deltaTime: 1.0 / 60) }
+        #expect(simd_length(b.b3.linearVelocity ?? .zero) > 1, "b wasn't struck")
+        #expect(simd_length(a.b3.angularVelocity ?? .zero) < 0.01 && simd_length(b.b3.angularVelocity ?? .zero) < 0.01,
+                "spins \(a.b3.angularVelocity ?? .zero), \(b.b3.angularVelocity ?? .zero)")
+    }
+
+    // A turning capsule the ball's path never meets doesn't deflect it. One substep, so the
+    // capsule turns far within it.
+    @Test func turningShapesAreNotSweptFrozen() {
+        let r = root { $0.subStepCount = 1 }
+        let bar = body(r, .generateCapsule(height: 2, radius: 0.01), at: .zero, mode: .kinematic)
+        bar.components.set(B3PhysicsMotionComponent(angularVelocity: [0, 0, -10]))
+        let ball = body(r, .generateSphere(radius: 0.1), at: [-0.3, 0.8, 0], velocity: [12, 0, 0])
+        let w = world(r)
+        w.update(entities: [bar, ball], deltaTime: 1.0 / 60)
+        #expect(abs((ball.b3.linearVelocity?.x ?? 0) - 12) < 0.01, "deflected to \(ball.b3.linearVelocity ?? .zero)")
+    }
+
+    // A hinge with a limit, motor or spring isn't a free pendulum: its bob is Box3D's to strike.
+    @Test func restrainedHingesAreLeftToBox3D() throws {
+        let r = root()
+        let anchor = body(r, .generateBox(size: [0.1, 0.1, 0.1]), at: [0, 1, 0], mode: .static)
+        let bob = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let ball = body(r, .generateSphere(radius: 0.1), at: [-0.3, 0, 0], velocity: [2, 0, 0])
+        let hinge = simd_quatf(from: [1, 0, 0], to: [0, 0, 1])
+        try? B3PhysicsRevoluteJoint(pin0: anchor.pins.set(named: "a", position: .zero, orientation: hinge),
+                                    pin1: bob.pins.set(named: "b", position: [0, 1, 0], orientation: hinge),
+                                    angularLimit: 0...0).addToSimulation()
+        let w = world(r)
+        w.update(entities: [anchor, bob, ball], deltaTime: 1.0 / 60)
+        let id = try #require(w.record(for: bob)).bodyId
+        guard case .unsupported = SequentialImpacts.response(of: id) else {
+            Issue.record("the limited bob is \(SequentialImpacts.response(of: id))")
+            return
+        }
+    }
+
+    // A breakable pendulum struck hard along its string feels the load and breaks.
+    @Test func breakablePendulumsFeelTheImpact() {
+        let r = root()
+        let anchor = body(r, .generateBox(size: [0.1, 0.1, 0.1]), at: [0, 1, 0], mode: .static)
+        let bob = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let ball = body(r, .generateSphere(radius: 0.1), at: [0, -0.3, 0], mass: 10, velocity: [0, 20, 0])
+        let hinge = simd_quatf(from: [1, 0, 0], to: [0, 0, 1])
+        var joint = B3PhysicsRevoluteJoint(pin0: anchor.pins.set(named: "a", position: .zero, orientation: hinge),
+                                           pin1: bob.pins.set(named: "b", position: [0, 1, 0], orientation: hinge))
+        joint.breakLimit = B3JointBreakLimit(force: 100)
+        try? joint.addToSimulation()
+        let w = world(r)
+        var broke = 0
+        let sub = w.subscribe(to: B3JointEvents.Broke.self) { _ in broke += 1 }
+        for _ in 0..<20 { w.update(entities: [anchor, bob, ball], deltaTime: 1.0 / 60) }
+        sub.cancel()
+        #expect(broke == 1)
+    }
+
+    // Forces kept for later substeps stay one per body, however often they're added before a step.
+    @Test func keptForcesStayBounded() {
+        let r = root()
+        let ball = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let w = world(r)
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        for _ in 0..<1000 { ball.b3.addForce([1, 0, 0], relativeTo: nil); ball.b3.applyWind([1, 0, 0]) }
+        #expect(w.pendingForces.loads.count == 1 && w.pendingForces.winds.count == 1)
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        #expect(w.pendingForces.isEmpty)
+    }
+
+    // A forecast made after a force was added steps as the world does.
+    @Test func forecastsKeepPendingForces() throws {
+        let r = root()
+        let ball = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let w = world(r)
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        ball.b3.addForce([60, 0, 0], relativeTo: nil)
+        let forecast = try #require(w.forecast())
+        forecast.step()
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        let x = try #require(forecast.transform(of: ball)).translation.x
+        #expect(abs(x - ball.position.x) < 1e-5, "forecast \(x), world \(ball.position.x)")
+    }
+
+    // A fast kinematic paddle reaches a resting row within the step: the pass sees the pair.
+    @Test func fastKinematicsAreCandidates() {
+        let r = root { $0.subStepCount = 1 }
+        let paddle = body(r, .generateBox(size: [0.1, 0.4, 0.4]), at: [-0.4, 0, 0], mode: .kinematic)
+        paddle.components.set(B3PhysicsMotionComponent(linearVelocity: [20, 0, 0]))
+        let a = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let b = body(r, .generateSphere(radius: 0.1), at: [0.2, 0, 0])
+        let w = world(r)
+        w.update(entities: [paddle, a, b], deltaTime: 1.0 / 60)
+        let va = a.b3.linearVelocity?.x ?? 0, vb = b.b3.linearVelocity?.x ?? 0
+        // Elastic, off a paddle that doesn't slow: twice its speed.
+        #expect(abs(vb - 40) < 0.1, "velocities \(va), \(vb)")
+    }
 }

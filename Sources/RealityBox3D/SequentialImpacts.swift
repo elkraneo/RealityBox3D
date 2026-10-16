@@ -9,8 +9,9 @@ import simd
 /// the next, until nothing approaches: one ball in, one ball out, as in a Newton's cradle.
 ///
 /// Spheres against spheres, capsules and hulls; other contacts are left to Box3D, as are bodies
-/// held by joints, except a pendulum: one revolute or spherical joint to a static body, which the
-/// pass turns about its pivot. One-way shapes and pairs a joint keeps apart are Box3D's too.
+/// held by joints, except a pendulum: one free revolute or spherical joint to a static body, which
+/// the pass turns about its pivot. One-way shapes, pairs a joint keeps apart, and pairs turning
+/// more than the slop within the step are Box3D's too.
 enum SequentialImpacts {
     /// How a body answers an impulse.
     enum Response {
@@ -72,10 +73,11 @@ enum SequentialImpacts {
 
     /// Resolves the impacts the spheres of `spheres` would make within `dt`. Returns those at
     /// `hitThreshold` or faster between shapes that report hits, the fastest of each pair.
+    /// `moverSpeed` bounds how fast any non-static shape's points move, kinematic ones included.
     @discardableResult
     static func resolve(world: b3WorldId, spheres: [b3ShapeId], dt: Float, threshold: Float,
                         combine: B3MaterialCombine, slop: Float, oneWay: OneWayShapes?,
-                        hitThreshold: Float = .infinity) -> [Hit] {
+                        moverSpeed: Float = 0, hitThreshold: Float = .infinity) -> [Hit] {
         guard !spheres.isEmpty else { return [] }
         var bodies: [b3BodyId: Body] = [:]
         func body(_ id: b3BodyId) -> Body {
@@ -87,7 +89,7 @@ enum SequentialImpacts {
         }
 
         // Candidate pairs: what each sphere could reach this step, the fastest mover's way included.
-        let fastest = spheres.map { simd_length(b3Body_GetLinearVelocity(b3Shape_GetBody($0)).simd) }.max() ?? 0
+        let fastest = max(moverSpeed, spheres.map { simd_length(b3Body_GetLinearVelocity(b3Shape_GetBody($0)).simd) }.max() ?? 0)
         var pairs: [Pair] = [], seen = Set<Pair>()
         final class Found { var shapes: [b3ShapeId] = [] }
         // From the moving spheres out to the spheres they reach, sleeping ones included, so a
@@ -132,10 +134,14 @@ enum SequentialImpacts {
                 guard a.movable || b.movable else { continue }
                 let t = b3Body_GetTransform(idA)
                 let centerA = t.q.simd.act(sphere.center.simd) + t.p.simd
-                guard let n = touch(sphere: centerA, radius: sphere.radius, moving: a.linear + simd_cross(a.angular, centerA - a.center),
-                                    other: pair.other, moving: b.linear, within: dt, slop: slop) else { continue }
+                // The sweep moves the two without turning them: a pair that turns more than the slop
+                // within the step is Box3D's. A sphere at its body's center turns in place.
+                let turning = simd_length(a.angular) * simd_length(centerA - a.center) + simd_length(b.angular) * reach(of: pair.other, from: b.center)
+                guard turning * dt <= slop else { continue }
+                guard let (n, onB) = touch(sphere: centerA, radius: sphere.radius, moving: a.linear + simd_cross(a.angular, centerA - a.center),
+                                           other: pair.other, moving: b.linear, within: dt, slop: slop) else { continue }
+                // Both contact points as they are now, along the normal where the two will touch.
                 let point = centerA + n * sphere.radius
-                let onB = b3Shape_GetClosestPoint(pair.other, b3Vec3(centerA)).simd
                 let vA = a.linear + simd_cross(a.angular, point - a.center)
                 let vB = b.linear + simd_cross(b.angular, onB - b.center)
                 let vn = simd_dot(vB - vA, n)
@@ -165,26 +171,52 @@ enum SequentialImpacts {
         return Array(hits.values)
     }
 
-    /// The contact normal, from the sphere towards `other`, if the sphere comes within `slop` of it
-    /// within `dt`, the two moving apart from each other at constant velocities: conservative
-    /// advancement, so a near miss isn't an impact.
+    /// The contact normal, from the sphere towards `other`, and the touched point of `other` at its
+    /// present pose, if the sphere comes within `slop` of it within `dt`, the two moving at constant
+    /// velocities without turning: conservative advancement, so a near miss isn't an impact.
     static func touch(sphere center: SIMD3<Float>, radius: Float, moving va: SIMD3<Float>,
-                      other: b3ShapeId, moving vb: SIMD3<Float>, within dt: Float, slop: Float) -> SIMD3<Float>? {
+                      other: b3ShapeId, moving vb: SIMD3<Float>, within dt: Float,
+                      slop: Float) -> (normal: SIMD3<Float>, point: SIMD3<Float>)? {
         let motion = va - vb, speed = simd_length(motion)
         var time: Float = 0
         for _ in 0..<32 {
             // In the other shape's frame at its present pose.
             let c = center + motion * time
-            let gap = b3Shape_GetClosestPoint(other, b3Vec3(c)).simd - c
+            let onOther = b3Shape_GetClosestPoint(other, b3Vec3(c)).simd
+            let gap = onOther - c
             let distance = simd_length(gap)
             guard distance > 1e-6 else { return nil }
             let separation = distance - radius
-            if separation <= slop { return gap / distance }
+            if separation <= slop { return (gap / distance, onOther) }
             guard speed > 0 else { return nil }
             time += separation / speed
             if time > dt { return nil }
         }
         return nil
+    }
+
+    /// The farthest a shape reaches from `center`; a sphere's surface turns in place.
+    static func reach(of shape: b3ShapeId, from center: SIMD3<Float>) -> Float {
+        if b3Shape_GetType(shape) == b3_sphereShape {
+            let t = b3Body_GetTransform(b3Shape_GetBody(shape))
+            return simd_length(t.q.simd.act(b3Shape_GetSphere(shape).center.simd) + t.p.simd - center)
+        }
+        let box = b3Shape_GetAABB(shape)
+        let mid = (box.lowerBound.simd + box.upperBound.simd) / 2
+        return simd_length(mid - center) + simd_length(box.upperBound.simd - box.lowerBound.simd) / 2
+    }
+
+    /// The fastest any point of a non-static shape among `shapes` moves, as a bound.
+    static func moverSpeed(of shapes: [b3ShapeId]) -> Float {
+        var fastest: Float = 0
+        for s in shapes where b3Shape_IsValid(s) {
+            let body = b3Shape_GetBody(s)
+            guard b3Body_GetType(body) != b3_staticBody, b3Body_IsEnabled(body), b3Body_IsAwake(body) else { continue }
+            let w = simd_length(b3Body_GetAngularVelocity(body).simd)
+            let speed = simd_length(b3Body_GetLinearVelocity(body).simd) + (w > 0 ? w * reach(of: s, from: b3Body_GetWorldCenter(body).simd) : 0)
+            fastest = max(fastest, speed)
+        }
+        return fastest
     }
 
     /// How a body answers the pass's impulses.
@@ -205,6 +237,15 @@ enum SequentialImpacts {
         guard holding.count == 1, type == b3_revoluteJoint || type == b3_sphericalJoint,
               b3Body_GetType(isA ? b3Joint_GetBodyB(joint) : b3Joint_GetBodyA(joint)) == b3_staticBody
         else { return .unsupported }
+        // Free to swing: limits, motors and springs resist what the pass would give, and a joint
+        // that can break must feel the impact's load.
+        let restrained = type == b3_revoluteJoint
+            ? b3RevoluteJoint_IsLimitEnabled(joint) || b3RevoluteJoint_IsMotorEnabled(joint) || b3RevoluteJoint_IsSpringEnabled(joint)
+            : b3SphericalJoint_IsConeLimitEnabled(joint) || b3SphericalJoint_IsTwistLimitEnabled(joint)
+                || b3SphericalJoint_IsMotorEnabled(joint) || b3SphericalJoint_IsSpringEnabled(joint)
+        let breakable = b3Joint_GetForceThreshold(joint) < .greatestFiniteMagnitude
+            || b3Joint_GetTorqueThreshold(joint) < .greatestFiniteMagnitude
+        guard !restrained, !breakable else { return .unsupported }
         // A pinned body that can't turn can't move.
         guard inverseInertia.determinant != 0 else { return .immovable }
         let frame = isA ? b3Joint_GetLocalFrameA(joint) : b3Joint_GetLocalFrameB(joint)
@@ -249,11 +290,12 @@ enum SequentialImpacts {
 extension B3World {
     /// Resolves the coming step's impacts and keeps those that are hits, for `collectEvents`.
     func resolveImpacts(dt: Float) {
+        let shapes = records.values.filter(\.isEnabled).flatMap(\.shapeIds)
         impactHits = SequentialImpacts.resolve(
-            world: id, spheres: SequentialImpacts.spheres(of: records.values.filter(\.isEnabled).flatMap(\.shapeIds)),
+            world: id, spheres: SequentialImpacts.spheres(of: shapes),
             dt: dt, threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
             slop: 0.005 * b3GetLengthUnitsPerMeter(), oneWay: oneWayRecords.isEmpty ? nil : oneWayShapes,
-            hitThreshold: b3World_GetHitEventThreshold(id))
+            moverSpeed: SequentialImpacts.moverSpeed(of: shapes), hitThreshold: b3World_GetHitEventThreshold(id))
     }
 }
 
@@ -265,5 +307,46 @@ extension SequentialImpacts {
             let body = b3Shape_GetBody(s)
             return b3Body_GetType(body) == b3_dynamicBody && b3Body_IsEnabled(body) && b3Body_IsAwake(body)
         }
+    }
+}
+
+/// The forces applied for the coming fixed step, summed per body and wind per shape. Box3D clears
+/// applied forces after each of its steps; when sequential impacts step the substeps one by one,
+/// these are applied again before each later one.
+struct PendingForces {
+    struct Load { var force = SIMD3<Float>.zero, torque = SIMD3<Float>.zero }
+    struct Wind: Hashable { let shape: b3ShapeId; let wind: SIMD3<Float>; let drag: Float, lift: Float, maxSpeed: Float }
+    var loads: [b3BodyId: Load] = [:]
+    var winds: [Wind: Int] = [:]
+
+    var isEmpty: Bool { loads.isEmpty && winds.isEmpty }
+
+    mutating func add(force: SIMD3<Float>, at point: SIMD3<Float>?, to body: b3BodyId) {
+        loads[body, default: .init()].force += force
+        if let point { loads[body, default: .init()].torque += simd_cross(point - b3Body_GetWorldCenter(body).simd, force) }
+    }
+    mutating func add(torque: SIMD3<Float>, to body: b3BodyId) { loads[body, default: .init()].torque += torque }
+    mutating func add(_ wind: Wind) { winds[wind, default: 0] += 1 }
+
+    func apply() {
+        for (body, load) in loads where b3Body_IsValid(body) {
+            b3Body_ApplyForceToCenter(body, b3Vec3(load.force), true)
+            b3Body_ApplyTorque(body, b3Vec3(load.torque), true)
+        }
+        for (w, count) in winds where b3Shape_IsValid(w.shape) {
+            for _ in 0..<count { b3Shape_ApplyWind(w.shape, b3Vec3(w.wind), w.drag, w.lift, w.maxSpeed, true) }
+        }
+    }
+
+    /// The same forces on a copy of the world, such as a forecast's.
+    func copied(to world: UInt16) -> PendingForces {
+        var copy = PendingForces()
+        for (body, load) in loads { var b = body; b.world0 = world; copy.loads[b] = load }
+        for (w, count) in winds {
+            var s = w.shape
+            s.world0 = world
+            copy.winds[Wind(shape: s, wind: w.wind, drag: w.drag, lift: w.lift, maxSpeed: w.maxSpeed)] = count
+        }
+        return copy
     }
 }
