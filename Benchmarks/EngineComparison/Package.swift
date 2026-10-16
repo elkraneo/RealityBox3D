@@ -8,7 +8,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     dependencies: [
         .package(path: "../.."),
-        .package(url: "https://github.com/elkraneo/RealitySDFPhysics", exact: "0.2.0"),
+        .package(url: "https://github.com/elkraneo/RealitySDFPhysics", exact: "0.3.0"),
     ],
     targets: [
         .executableTarget(

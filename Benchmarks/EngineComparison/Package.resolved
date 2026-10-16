@@ -1,13 +1,13 @@
 {
-  "originHash" : "e3695ea15924c1bfd914909cc41c541bd7cb841e4b5f3ca1950a764d1c5e45df",
+  "originHash" : "d6df193d41d6045662eb84a9653d6fa95cbdc45bfa68f5c7cacbd38bf85fc741",
   "pins" : [
     {
       "identity" : "realitysdfphysics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/elkraneo/RealitySDFPhysics",
       "state" : {
-        "revision" : "789e04537ff921b9642aed074ac4845f2d782918",
-        "version" : "0.2.0"
+        "revision" : "c149ea1c78f104ba95690081c05160fb709346ca",
+        "version" : "0.3.0"
       }
     }
   ],

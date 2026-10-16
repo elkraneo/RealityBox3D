@@ -22,7 +22,7 @@ move these numbers. Builds are large, so put `--scratch-path` on a disk with roo
 
 Measured with RealitySDFPhysics at commit 30ddbb9, from before its rename to RealitySDFPhysics
 and its 0.2.0 release, when it was still called SDFCollisionKit. These numbers have not yet been
-remeasured on 0.2.0.
+remeasured on 0.3.0, the release this package now pins.
 
 Two runs: `results-2026-10-15-m1-loaded.txt` under a load average of about 14 from other work, and
 `results-2026-10-15-m1-quiet.txt` at about 6, the reference below. Mean ms per step:
@@ -50,20 +50,23 @@ Two runs: `results-2026-10-15-m1-loaded.txt` under a load average of about 14 fr
 ## Newton's cradle
 
 `engine-comparison cradle` runs Apple's "Simulating physics joints in your RealityKit app" scene
-with Apple's values on RealityKit and on RealityBox3D (its sample's scene, with
-`sequentialImpacts`), using RealitySDFPhysics's metrics: release the first k balls from 30° and
-record each ball's farthest swing over the first swing out; push the first ball with Apple's
-impulse; and send a free row of five balls, awake and asleep, the first at 1 m/s. These measure
-behavior, not time, so they do not depend on load. `results-2026-10-15-m1-cradle.txt`:
+with Apple's values on RealityKit, on RealityBox3D (its sample's scene, with `sequentialImpacts`)
+and on RealitySDFPhysics 0.3.0 (its Pendulum sample's scene, with the contact margin and
+restitution threshold that sample sizes for the balls), using RealitySDFPhysics's metrics: release
+the first k balls from 30° and record each ball's farthest swing over the first swing out; push the
+first ball with Apple's impulse; and send a free row of five balls, awake and asleep, the first at
+1 m/s. These measure behavior, not time, so they do not depend on load.
+`results-2026-10-16-m1-cradle.txt`:
 
-| Case | A real cradle | RealityBox3D | RealityKit |
-| --- | --- | --- | --- |
-| Lift 1 | ball 5 out, others still | 29.8°, others ≤ 0.3° | all five 5.9–7.7° |
-| Lift 2 | balls 4–5 out | 29.8° / 29.8°, others ≤ 0.3° | all five 11.9–14.3° |
-| Lift 3 | balls 3–5 out | 29.8° / 29.8° / 30.0°, others ≤ 0.3° | all five 17.7–17.9° |
-| Push | ball 1 to 48°, then ball 5 out | ball 5 48.1°, balls 2–4 ≤ 0.8° | balls 2–5 out together, 18.9–24.3° |
-| Free row, awake or asleep | last ball 1.000 m/s, the rest 0 | 1.000, the rest 0.000 | −0.630, 0.367, 0.416, 0.416, 0.432 |
+| Case | A real cradle | RealityBox3D | RealitySDFPhysics | RealityKit |
+| --- | --- | --- | --- | --- |
+| Lift 1 | ball 5 out, others still | 29.8°, others ≤ 0.3° | 29.8°, others ≤ 0.1° | all five 5.9–7.7° |
+| Lift 2 | balls 4–5 out | 29.8° / 29.8°, others ≤ 0.3° | 29.4° / 30.1°, others ≤ 0.3° | all five 11.9–14.3° |
+| Lift 3 | balls 3–5 out | 29.8° / 29.8° / 30.0°, others ≤ 0.3° | 29.0° / 29.9° / 30.5°, others ≤ 0.9° | all five 17.7–17.9° |
+| Push | ball 1 to 48°, then ball 5 out | ball 5 48.1°, balls 2–4 ≤ 0.8° | ball 5 48.0°, balls 2–4 ≤ 0.1° | balls 2–5 out together, 18.9–24.3° |
+| Free row, awake or asleep | last ball 1.000 m/s, the rest 0 | 1.000, the rest 0.000 | 1.000, the rest 0.000 | −0.630, 0.367, 0.416, 0.416, 0.432 |
 
 Box3D's solver alone shares momentum like RealityKit's (one ball in sends three out at 12°);
-`sequentialImpacts` resolves the impacts pair by pair before each step. RealitySDFPhysics's
-cradle, the same method in its own solver, is in its PR #26, after the 0.2.0 this package pins.
+`sequentialImpacts` resolves the impacts pair by pair before each step. RealitySDFPhysics 0.3.0
+does the same in its own solver with its sequential collision pass. Its bounces don't yet see
+joints, a gap its README lists.

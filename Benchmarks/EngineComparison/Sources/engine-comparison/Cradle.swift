@@ -1,5 +1,5 @@
-// Apple's Newton's cradle ("Simulating physics joints in your RealityKit app") on RealityKit and
-// RealityBox3D, with RealitySDFPhysics's metrics:
+// Apple's Newton's cradle ("Simulating physics joints in your RealityKit app") on RealityKit,
+// RealityBox3D and RealitySDFPhysics, with RealitySDFPhysics's metrics:
 //
 // 1. Lift: the first k balls raised to 30° and released; each ball's farthest swing toward +x
 //    over the first swing out, 0.85 s with Apple's slow motion. A real cradle sends the far k
@@ -10,13 +10,16 @@
 //    velocities after 20 steps, with the row awake and asleep. The last at 1.000, the rest 0.
 //
 // RealityKit runs Apple's scene with its values verbatim. RealityBox3D runs the same scene as its
-// Newton's Cradle sample: Apple's values in centimeters, with `sequentialImpacts`.
+// Newton's Cradle sample: Apple's values in centimeters, with `sequentialImpacts`. RealitySDFPhysics
+// runs it as its Pendulum sample: Apple's values, with the contact margin and restitution threshold
+// that sample sizes for the balls.
 
 import CoreMedia
 import Foundation
 import Metal
 import RealityBox3D
 import RealityKit
+import RealitySDFPhysics
 
 enum CradleCase {
     case lift(Int), push
@@ -94,6 +97,70 @@ func cradleBox3D(_ c: CradleCase) -> [Float] {
     for _ in 0..<c.frames {
         world.update(entities: bodies, deltaTime: 1.0 / 60)
         for i in 0..<5 { peak[i] = max(peak[i], cradle.angle(i)) }
+    }
+    return peak
+}
+
+/// RealitySDFPhysics's Pendulum sample: Apple's scene and values, with its margin and threshold.
+@MainActor
+func cradleSDF(_ c: CradleCase) -> [Float] {
+    let ballRadius: Float = 0.04, stringLength: Float = 0.3, speed: Float = 0.5
+    let attachmentSize: SIMD3<Float> = [2, 0.5, 2]
+    let root = Entity(), parent = Entity(), simulation = SDFSimulation()
+    root.addChild(parent)
+    var s = SDFPhysicsSimulationComponent(simulation: simulation)
+    s.solverIterations.positionIterations = 25
+    s.solverIterations.velocityIterations = 25
+    s.collisionDetection.contactMargin = 0.008
+    s.collisionDetection.allowedPenetration = 0.008
+    s.restitutionThreshold = 0.1
+    s.isSleepingEnabled = false
+    s.isInterpolationEnabled = false
+    root.components.set(s)
+    let material = SDFPhysicsMaterial(staticFriction: 0, dynamicFriction: 0, restitution: 1)
+    let hinge = simd_quatf(from: [1, 0, 0], to: [0, 0, 1])
+    let lifted: Int = { if case .lift(let k) = c { k } else { 0 } }()
+    var balls: [Entity] = []
+    for i in 0..<5 {
+        let p = Entity(), ball = Entity(), att = Entity()
+        ball.position.y = -stringLength
+        p.addChild(ball)
+        p.addChild(att)
+        var bb = SDFPhysicsBodyComponent(shape: .sphere(radius: ballRadius))
+        bb.massProperties = .init(mass: 2)
+        bb.material = material
+        bb.linearDamping = 0
+        bb.angularDamping = 0
+        ball.components.set([bb, SDFPhysicsMotionComponent()])
+        var ab = SDFPhysicsBodyComponent(shape: .box(halfExtents: attachmentSize * ballRadius / 2), mode: .static)
+        ab.material = material
+        att.components.set(ab)
+        p.position.x = (Float(i) - 2) * attachmentSize.x * ballRadius
+        parent.addChild(p)
+        try? SDFPhysicsRevoluteJoint(pin0: att.pins.set(named: "a", position: .zero, orientation: hinge),
+                                     pin1: ball.pins.set(named: "b", position: att.position(relativeTo: ball), orientation: hinge)).addToSimulation()
+        if i < lifted {
+            let a: Float = -30 * .pi / 180
+            ball.position = stringLength * SIMD3(sin(a), -cos(a), 0)
+            ball.orientation = simd_quatf(angle: a, axis: [0, 0, 1])
+        }
+        balls.append(ball)
+    }
+    root.position.y = stringLength / 2
+    root.scale = SIMD3(repeating: speed)
+    parent.scale = SIMD3(repeating: 1 / speed)
+    if case .push = c {
+        simulation.step(root: root)
+        // The sample's push: Apple's impulse times the root's scale cubed, as RealityKit applies it
+        balls[0].sdf.applyLinearImpulse([-2 / pow(speed, 4), 0, 0] * pow(speed, 3), relativeTo: root)
+    }
+    var peak = [Float](repeating: -90, count: 5)
+    for _ in 0..<c.frames {
+        simulation.step(root: root)
+        for i in 0..<5 {
+            let v = balls[i].position // hinge at the pendulum's origin
+            peak[i] = max(peak[i], atan2(v.x, -v.y) * 180 / .pi)
+        }
     }
     return peak
 }
@@ -255,13 +322,46 @@ func freeRowRealityKit(asleep: Bool) async throws -> (velocities: [Float], spin:
     return (motion.map(\.linearVelocity.x), motion.map { simd_length($0.angularVelocity) * 0.04 }.max() ?? 0)
 }
 
-/// Prints the three metrics for both engines.
+@MainActor
+func freeRowSDF(asleep: Bool) -> (velocities: [Float], spin: Float) {
+    let root = Entity(), simulation = SDFSimulation()
+    var s = SDFPhysicsSimulationComponent(simulation: simulation)
+    s.gravity = .zero
+    s.isSleepingEnabled = asleep
+    s.isInterpolationEnabled = false
+    // As its own free-row tests: Apple's balls need a skin and threshold sized for them
+    s.restitutionThreshold = 0.05
+    s.collisionDetection.contactMargin = 0.004
+    s.collisionDetection.allowedPenetration = 0.004
+    root.components.set(s)
+    let balls = (0..<5).map { i -> Entity in
+        let e = Entity()
+        e.position = [Float(i) * 0.08 - (i == 0 ? 0.05 : 0), 0, 0]
+        var b = SDFPhysicsBodyComponent(shape: .sphere(radius: 0.04))
+        b.massProperties = .init(mass: 2)
+        b.material = SDFPhysicsMaterial(staticFriction: 0, dynamicFriction: 0, restitution: 1)
+        b.linearDamping = 0
+        b.angularDamping = 0
+        e.components.set([b, SDFPhysicsMotionComponent()])
+        root.addChild(e)
+        return e
+    }
+    for _ in 0..<(asleep ? 90 : 1) { simulation.step(root: root) }
+    if asleep, simulation.statistics.sleepingBodies != 5 { print("warning: \(simulation.statistics.sleepingBodies) of 5 SDF balls asleep") }
+    balls[0].components.set(SDFPhysicsMotionComponent(linearVelocity: [1, 0, 0]))
+    for _ in 0..<20 { simulation.step(root: root) }
+    let motion = balls.map { $0.components[SDFPhysicsMotionComponent.self] ?? SDFPhysicsMotionComponent() }
+    return (motion.map(\.linearVelocity.x), motion.map { simd_length($0.angularVelocity) * 0.04 }.max() ?? 0)
+}
+
+/// Prints the three metrics for all three engines.
 @MainActor
 func reportCradle() async throws {
     print("Newton's cradle, Apple's values · farthest swing toward +x per ball, degrees")
     print("")
     for c in [CradleCase.lift(1), .lift(2), .lift(3), .push] {
-        for (name, peak) in [("RealityBox3D", cradleBox3D(c)), ("RealityKit", try await cradleRealityKit(c))] {
+        for (name, peak) in [("RealityBox3D", cradleBox3D(c)), ("SDFPhysics", cradleSDF(c)),
+                           ("RealityKit", try await cradleRealityKit(c))] {
             let out: Int = { if case .lift(let k) = c { k } else { 1 } }()
             let far = Array(peak.suffix(out)), rest = Array(peak.prefix(5 - out).dropFirst(c.label == "push" ? 1 : 0))
             let worst = rest.max() ?? 0
@@ -269,7 +369,7 @@ func reportCradle() async throws {
                 if case .push = c { return far.allSatisfy { $0 > 40 } && worst < 2 }
                 return far.allSatisfy { $0 > 28 } && worst < 1.5
             }()
-            print(String(format: "%-7@ %-13@ ", c.label as NSString, name as NSString)
+            print(c.label.padding(toLength: 8, withPad: " ", startingAt: 0) + name.padding(toLength: 13, withPad: " ", startingAt: 0)
                   + peak.map { String(format: "%6.1f", $0) }.joined()
                   + String(format: "   far %@, worst other %.1f  %@", far.map { String(format: "%.1f", $0) }.joined(separator: " / ") as NSString,
                            worst, (pass ? "pass" : "FAIL") as NSString))
@@ -278,9 +378,10 @@ func reportCradle() async throws {
     print("")
     print("Free row, zero gravity, first ball at 1 m/s · velocities after 20 steps, m/s")
     for asleep in [false, true] {
-        for (name, row) in [("RealityBox3D", freeRowBox3D(asleep: asleep)), ("RealityKit", try await freeRowRealityKit(asleep: asleep))] {
+        for (name, row) in [("RealityBox3D", freeRowBox3D(asleep: asleep)), ("SDFPhysics", freeRowSDF(asleep: asleep)),
+                           ("RealityKit", try await freeRowRealityKit(asleep: asleep))] {
             let pass = abs(row.velocities[4] - 1) < 0.005 && row.velocities.prefix(4).allSatisfy { abs($0) < 0.005 } && row.spin < 0.002
-            print(String(format: "%-7@ %-13@ ", (asleep ? "asleep" : "awake") as NSString, name as NSString)
+            print((asleep ? "asleep" : "awake").padding(toLength: 8, withPad: " ", startingAt: 0) + name.padding(toLength: 13, withPad: " ", startingAt: 0)
                   + row.velocities.map { String(format: "%7.3f", $0) }.joined()
                   + String(format: "   spin %.4f m/s  %@", row.spin, (pass ? "pass" : "FAIL") as NSString))
         }
