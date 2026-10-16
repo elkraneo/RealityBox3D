@@ -52,6 +52,7 @@ do {
         let camera = DemoStage.makeCamera()
         scene.camera.place(camera)
         let light = DemoStage.makeLights()
+        DemoStage.fitShadows(light, to: scene.camera)
         renderer.entities.append(contentsOf: [runner.root, light, camera])
         renderer.activeCamera = camera
         renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1))

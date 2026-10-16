@@ -13,6 +13,7 @@ final class DemoModel {
     /// Parent of the scene, which `B3PhysicsSystem` advances every frame.
     @ObservationIgnored let root = Entity()
     @ObservationIgnored let cameraEntity = DemoStage.makeCamera()
+    @ObservationIgnored let lights = DemoStage.makeLights()
     @ObservationIgnored private var camera = DemoScene.all[0].camera
 
     /// Scenes grouped by upstream category, computed once so the sidebar never filters inline.
@@ -57,7 +58,7 @@ final class DemoModel {
         scene = next
         reset()
         camera = next.camera
-        camera.place(cameraEntity)
+        place()
     }
 
     // MARK: Keys, for scenes with controls
@@ -139,7 +140,7 @@ final class DemoModel {
     func followCamera() {
         guard let target = DemoScene.followTarget(root: root) else { return }
         camera.target = target
-        camera.place(cameraEntity)
+        place()
     }
 
     /// Rebuilds the scene. The old bodies leave the query, so their Box3D bodies are destroyed
@@ -171,18 +172,24 @@ final class DemoModel {
 
     // MARK: Camera
 
-    func placeCamera() { camera.place(cameraEntity) }
+    func placeCamera() { place() }
+
+    /// Places the camera and fits the shadows to its distance.
+    private func place() {
+        camera.place(cameraEntity)
+        DemoStage.fitShadows(lights, to: camera)
+    }
 
     func orbit(by delta: CGSize) {
         camera.yaw -= Float(delta.width) * 0.006
         camera.pitch = min(max(camera.pitch + Float(delta.height) * 0.006, -1.4), 1.5)
-        camera.place(cameraEntity)
+        place()
         pushInput()
     }
 
     func zoom(by factor: Float) {
         camera.distance = min(max(camera.distance / factor, 0.5), 1000)
-        camera.place(cameraEntity)
+        place()
     }
 
     func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {

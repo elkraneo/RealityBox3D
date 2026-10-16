@@ -129,7 +129,7 @@ private struct Viewport: View {
             ZStack {
                 RealityView { content in
                     content.add(model.root)
-                    content.add(DemoStage.makeLights())
+                    content.add(model.lights)
                     content.add(model.cameraEntity)
                     model.placeCamera()
                     model.frameSubscription = content.subscribe(to: SceneEvents.Update.self) { _ in model.followCamera() }
