@@ -62,7 +62,7 @@ public struct DemoScene: Identifiable, Sendable {
     }
 
     public static var all: [DemoScene] {
-        benchmarks + stacking + shapes + restitution + bodies + joints + vehicles + characters + continuous + events + meshes
+        benchmarks + stacking + shapes + surfaces + restitution + bodies + joints + vehicles + characters + continuous + events + meshes
     }
 
     public static func named(_ name: String) -> DemoScene? {

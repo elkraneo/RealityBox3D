@@ -483,6 +483,19 @@ import CBox3D
         #expect(spin.x.isFinite && spin.y.isFinite && spin.z.isFinite, "spin \(spin)")
         #expect(spin.x > 0 && abs(spin.y) < 1e-6 && abs(spin.z) < 1e-6, "spin \(spin)")
     }
+
+    /// A motion component's velocities are the center of mass's, at creation as on later edits:
+    /// Box3D used to add ω × offset when resolving the mass of a newly created body.
+    @Test func creationVelocityIsTheCenterOfMasses() {
+        let r = root()
+        let e = body(r, [B3ShapeResource.generateBox(size: [0.5, 0.5, 0.5]).offsetBy(translation: [0, 2, 0])])
+        e.components.set(B3PhysicsMotionComponent(linearVelocity: [1, 0, 0], angularVelocity: [0, 0, 3]))
+        let w = world(r)
+        w.update(entities: [e], deltaTime: 0)
+        let id = w.record(for: e)!.bodyId
+        #expect(simd_distance(b3Body_GetLinearVelocity(id).simd, [1, 0, 0]) < 1e-4, "\(b3Body_GetLinearVelocity(id).simd)")
+        #expect(simd_distance(b3Body_GetAngularVelocity(id).simd, [0, 0, 3]) < 1e-4)
+    }
 }
 
 /// Findings in the RealityKit system path: nested bodies, motion components, scene lifetime.

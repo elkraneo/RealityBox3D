@@ -65,24 +65,64 @@ final class DemoModel {
     @ObservationIgnored private var keys: Set<UInt16> = []
     @ObservationIgnored private var shift = false
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var focusObservers: [any NSObjectProtocol] = []
     @ObservationIgnored var frameSubscription: EventSubscription?
+    /// The window showing this model; key events of other windows are left alone.
+    @ObservationIgnored weak var window: NSWindow?
 
     /// Upstream's WASD, space and shift, read only while the scene has controls.
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-            guard let self, self.scene.controls != nil else { return event }
-            if event.type == .flagsChanged {
-                self.shift = event.modifierFlags.contains(.shift)
-                self.pushInput()
-                return event
-            }
-            // W, A, S, D and space; other keys keep the window's shortcuts
-            guard [13, 0, 1, 2, 49].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { return event }
-            if event.type == .keyDown { self.keys.insert(event.keyCode) } else { self.keys.remove(event.keyCode) }
-            self.pushInput()
+            self?.handle(event) ?? event
+        }
+        // A key released while another window or app has focus never arrives: forget them all.
+        let center = NotificationCenter.default
+        for name in [NSWindow.didResignKeyNotification, NSApplication.didResignActiveNotification] {
+            focusObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let window = note.object as? NSWindow, isApp = note.object is NSApplication
+                MainActor.assumeIsolated {
+                    guard let self, isApp || (window != nil && window === self.window) else { return }
+                    self.releaseKeys()
+                }
+            })
+        }
+    }
+
+    func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        for o in focusObservers { NotificationCenter.default.removeObserver(o) }
+        focusObservers = []
+        releaseKeys()
+    }
+
+    private func handle(_ event: NSEvent) -> NSEvent? {
+        guard scene.controls != nil, let window, event.window === window else { return event }
+        if event.type == .flagsChanged {
+            shift = event.modifierFlags.contains(.shift)
+            pushInput()
+            return event
+        }
+        // W, A, S, D and space; other keys keep the window's shortcuts
+        let tracked: Set<UInt16> = [13, 0, 1, 2, 49]
+        guard tracked.contains(event.keyCode) else { return event }
+        if event.type == .keyUp {
+            // A release always counts, whatever modifiers are held by then
+            keys.remove(event.keyCode)
+            pushInput()
             return nil
         }
+        guard event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { return event }
+        keys.insert(event.keyCode)
+        pushInput()
+        return nil
+    }
+
+    private func releaseKeys() {
+        keys = []
+        shift = false
+        pushInput()
     }
 
     private func pushInput() {

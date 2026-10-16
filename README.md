@@ -78,7 +78,8 @@ if let forecast = world.forecast() {
 | `PhysicsFixedJoint`, `PhysicsDistanceJoint`, `PhysicsJointsComponent` | `B3PhysicsFixedJoint`, `B3PhysicsDistanceJoint`, `B3PhysicsJointsComponent` |
 | — | `B3PhysicsWheelJoint`, `B3PhysicsParallelJoint`, `B3PhysicsMotorJoint`, `B3PhysicsFilterJoint` |
 | `CharacterControllerComponent`, `moveCharacter(by:deltaTime:relativeTo:)` | `B3CharacterControllerComponent`, `entity.b3.moveCharacter(…)`, on Box3D's geometric mover |
-| — | `B3CharacterObstacleComponent`: soft obstacles (a push limit), shapes the sweep passes, bodies the character cannot push; `clippedVelocity` in the state |
+| — | `B3CharacterObstacleComponent`: soft obstacles (a push limit), shapes the sweep passes, bodies the character cannot push; `clippedVelocity` in the state; `moveCharacter(by:correction:…)` for positional corrections that are not motion |
+| — | `B3PhysicsMaterial.tangentVelocity`: conveyor belts |
 | `scene.raycast`, `scene.convexCast` | `world.raycast`, `world.convexCast` |
 | — | `world.overlaps(of:at:margin:)`: which bodies a shape placed here would touch |
 | — | `world.forecast()`: an exact copy of the world to step ahead |
@@ -104,12 +105,12 @@ does; enabled again, a body continues with the state it had.
 
 macOS apps built on the public API, in `Samples/`:
 
-- `Box3DDemos`: 29 scenes of Box3D's sample app rebuilt in the `Box3DDemoScenes` module with
+- `Box3DDemos`: 32 scenes of Box3D's sample app rebuilt in the `Box3DDemoScenes` module with
   upstream's positions, sizes, densities, materials and cameras, grouped by upstream category:
   Benchmark (Large Pyramid, Wide Pyramid, Convex Pile, Falling Boxes), Stacking (Card House,
-  Jenga Stack, Dominoes, Arch), Shapes (Inclined Plane, Rolling Resistance), Restitution, Bodies
+  Jenga Stack, Dominoes, Arch), Shapes (Inclined Plane, Rolling Resistance, Conveyor Belt, Wind), Restitution, Bodies
   (Gyroscopic Torque, Spinning Book, Weeble, Kinematic), Joints (Revolute, Prismatic, Spherical,
-  Weld, Bridge, Ball and Chain, Distance Joint, Driving), Ragdoll (upstream's 12-bone humanoid),
+  Weld, Bridge, Ball and Chain, Distance Joint, Driving, Door), Ragdoll (upstream's 12-bone humanoid),
   Character (Geometric Mover, on upstream's test level: walk with WASD, jump with space, sprint
   with shift), Continuous (Thin Wall, Bullet vs Stack), Events (Sensor Visit) and Mesh (Grid).
   Drag a body to pull it. `Box3DDemos --scene "Geometric Mover"` opens on one scene.

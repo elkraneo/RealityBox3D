@@ -82,6 +82,12 @@ final class BodyRecord {
         createShapes()
         world.oneWayShapesChanged(self, removing: [])
         updateMass()
+        // Box3D shifts a body's velocity when its center of mass moves, as resolving the mass just
+        // did; the component's velocities are the center's, as on every later edit.
+        if body.mode != .static, let motion {
+            b3Body_SetLinearVelocity(bodyId, b3Vec3(motion.linearVelocity))
+            b3Body_SetAngularVelocity(bodyId, b3Vec3(motion.angularVelocity))
+        }
         if body.mode == .kinematic, let motion {
             isVelocityDriven = motion.linearVelocity != .zero || motion.angularVelocity != .zero
         }
@@ -639,6 +645,7 @@ extension B3PhysicsMaterial {
         m.friction = dynamicFriction
         m.restitution = restitution
         m.rollingResistance = rollingResistance
+        m.tangentVelocity = b3Vec3(tangentVelocity)
         return m
     }
 }

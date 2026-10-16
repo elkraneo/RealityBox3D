@@ -77,17 +77,27 @@ extension B3BodyProxy {
     /// it touches. Gravity is the caller's, as in RealityKit: include it in `moveDelta`.
     public func moveCharacter(by moveDelta: SIMD3<Float>, deltaTime: Float, relativeTo referenceEntity: Entity?,
                               collisionHandler: ((B3CharacterCollision) -> Void)? = nil) {
+        moveCharacter(by: moveDelta, correction: .zero, deltaTime: deltaTime, relativeTo: referenceEntity,
+                      collisionHandler: collisionHandler)
+    }
+
+    /// Box3D extension: as `moveCharacter(by:deltaTime:relativeTo:)`, plus a positional
+    /// `correction` moved in the same sweep that is not motion: it neither pushes bodies nor
+    /// enters `clippedVelocity`. Upstream's mover floats its capsule with a spring this way.
+    public func moveCharacter(by moveDelta: SIMD3<Float>, correction: SIMD3<Float>, deltaTime: Float,
+                              relativeTo referenceEntity: Entity?, collisionHandler: ((B3CharacterCollision) -> Void)? = nil) {
         guard let controller = entity.components[B3CharacterControllerComponent.self],
               let world = RealityBox3D.world(for: entity) else { return }
         let root = world.root
         // The move in the root's space
         let m = referenceEntity.map { $0.transformMatrix(relativeTo: root) }
             ?? (root.map { simd_inverse($0.transformMatrix(relativeTo: nil)) } ?? matrix_identity_float4x4)
-        let w = m * SIMD4(moveDelta, 0)
+        let w = m * SIMD4(moveDelta, 0), k = m * SIMD4(correction, 0)
         let delta = SIMD3(w.x, w.y, w.z)
 
         let start = entity.position(relativeTo: root)
-        let result = world.moveCapsule(from: start, by: delta, controller: controller, deltaTime: deltaTime)
+        let result = world.moveCapsule(from: start, by: delta, correction: SIMD3(k.x, k.y, k.z), controller: controller,
+                                       deltaTime: deltaTime)
         entity.setPosition(result.position, relativeTo: root)
         let velocity = deltaTime > 0 ? (result.position - start) / deltaTime : .zero
         var state = B3CharacterControllerStateComponent(velocity: velocity, isOnGround: result.isOnGround)
@@ -115,7 +125,8 @@ extension B3World {
 
     /// Upstream's mover loop: gather contact planes, solve for the closest allowed delta, sweep it,
     /// repeat until the move settles. Then push touched dynamic bodies out of the way.
-    func moveCapsule(from start: SIMD3<Float>, by delta: SIMD3<Float>, controller c: B3CharacterControllerComponent,
+    func moveCapsule(from start: SIMD3<Float>, by delta: SIMD3<Float>, correction: SIMD3<Float> = .zero,
+                     controller c: B3CharacterControllerComponent,
                      deltaTime: Float) -> MoveResult {
         let half = max(c.height / 2 - c.radius, 0)
         var capsule = b3Capsule(center1: b3Vec3(-half * c.upVector), center2: b3Vec3(half * c.upVector), radius: c.radius)
@@ -134,7 +145,7 @@ extension B3World {
         let gathered = Planes(world: self)
         let context = Unmanaged.passUnretained(gathered).toOpaque()
         var position = start
-        let target = start + delta
+        let target = start + delta + correction
         for _ in 0..<5 {
             gathered.planes.removeAll(keepingCapacity: true)
             gathered.shapes.removeAll(keepingCapacity: true)

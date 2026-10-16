@@ -109,4 +109,28 @@ import simd
         walk(c, world, bodies: statics + [crate], velocity: [1.5, 0, 0], frames: 120, hits: &hits)
         #expect(crate.position.x > 2.2, "crate at \(crate.position.x)")
     }
+
+    /// A correction moves the character but is not motion: it pushes nothing.
+    @Test func correctionDoesNotPush() {
+        func push(correction: Bool) -> Float {
+            let (root, world, statics) = scene()
+            let c = character(root, at: [0, 0.8, 0])
+            let crate = Entity()
+            crate.position = [0.75, 0.8, 0]
+            crate.components.set(B3PhysicsBodyComponent(mode: .dynamic))
+            crate.components.set(B3CollisionComponent(shapes: [.generateBox(size: [0.6, 0.6, 0.6])]))
+            root.addChild(crate)
+            world.update(entities: statics + [crate], deltaTime: 0)
+            let dt: Float = 1.0 / 60
+            for _ in 0..<20 {
+                let step: SIMD3<Float> = [0.06, 0, 0]
+                if correction { c.b3.moveCharacter(by: .zero, correction: step, deltaTime: dt, relativeTo: nil) }
+                else { c.b3.moveCharacter(by: step, deltaTime: dt, relativeTo: nil) }
+                world.update(entities: statics + [crate], deltaTime: Double(dt))
+            }
+            return crate.position.x - 0.75
+        }
+        #expect(push(correction: false) > 0.1)
+        #expect(push(correction: true) < 0.01, "pushed \(push(correction: true))")
+    }
 }

@@ -34,6 +34,9 @@ public struct B3PhysicsMaterial: Equatable, Sendable {
     public var restitution: Float
     /// Box3D extension: rolling resistance for spheres and capsules.
     public var rollingResistance: Float = 0
+    /// Box3D extension: a conveyor belt's surface speed, in the body's frame, projected onto
+    /// each contact. Bodies resting on the shape are carried along at up to this speed.
+    public var tangentVelocity: SIMD3<Float> = .zero
 
     public static func generate(staticFriction: Float = 0.6, dynamicFriction: Float = 0.6, restitution: Float = 0) -> B3PhysicsMaterial {
         .init(staticFriction: staticFriction, dynamicFriction: dynamicFriction, restitution: restitution)

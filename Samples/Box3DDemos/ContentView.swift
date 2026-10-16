@@ -17,6 +17,8 @@ struct ContentView: View {
                     .padding(12)
             }
         }
+        .background(WindowReader { model.window = $0 })
+        .onDisappear { model.removeKeyMonitor() }
         .task {
             model.installKeyMonitor()
             // `Box3DDemos --scene "Geometric Mover"` opens on that scene
@@ -181,6 +183,19 @@ private extension View {
     /// Scroll-wheel zoom on macOS.
     func onScrollWheel(_ action: @escaping (CGFloat) -> Void) -> some View {
         background(ScrollWheelCatcher(action: action))
+    }
+}
+
+/// Hands over the window the view is in, once it is in one.
+private struct WindowReader: NSViewRepresentable {
+    let found: (NSWindow?) -> Void
+    func makeNSView(context: Context) -> NSView {
+        let v = ReaderView(); v.found = found; return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+    final class ReaderView: NSView {
+        var found: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() { found?(window) }
     }
 }
 

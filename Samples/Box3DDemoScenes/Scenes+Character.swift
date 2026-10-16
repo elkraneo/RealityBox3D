@@ -112,9 +112,16 @@ enum GeometricMover {
         let mover = Mover()
         let slabTimer = SettleTimer(), treeTimer = SettleTimer()
         b.onFrame { ctx in
-            let dt = Float(min(ctx.deltaTime, 1.0 / 30))
-            guard dt > 0, let world = ctx.world else { return }
-            mover.step(character, world: world, root: ctx.root, input: ctx.input, forward: ctx.cameraForward, dt: dt)
+            guard ctx.deltaTime > 0, let world = ctx.world else { return }
+            // Upstream moves once per 60 Hz step. Long frames take several moves, up to the four
+            // fixed steps the physics takes at most per frame, so the character keeps pace with it.
+            var remaining = Float(min(ctx.deltaTime, 4.0 / 60))
+            let dt = remaining
+            while remaining > 1e-5 {
+                let step = min(remaining, 1.0 / 60)
+                mover.step(character, world: world, root: ctx.root, input: ctx.input, forward: ctx.cameraForward, dt: step)
+                remaining -= step
+            }
             // Not upstream's: walking off the level's edge starts over
             if character.position.y < -20 { mover.reset(character) }
             if slabTimer.settled(slab, dt: dt) {
@@ -216,13 +223,11 @@ enum GeometricMover {
                 pogoVelocity = 0
             }
 
-            character.b3.moveCharacter(by: dt * (velocity + [0, pogoVelocity, 0]), deltaTime: dt, relativeTo: root)
-            // Upstream clips its velocity against the planes it touched, so depenetration adds none.
-            // The pogo's part is not kept: on the ground the next step zeroes the vertical anyway.
-            if let state = character.components[B3CharacterControllerStateComponent.self] {
-                velocity = state.clippedVelocity
-                if onGround { velocity.y = 0 }
-            }
+            // The pogo is a correction, not motion: upstream pushes bodies and clips with its
+            // velocity alone, so a spring rising under a slab does not launch it
+            character.b3.moveCharacter(by: dt * velocity, correction: [0, dt * pogoVelocity, 0], deltaTime: dt, relativeTo: root)
+            // Upstream clips its velocity against the planes it touched, so depenetration adds none
+            if let state = character.components[B3CharacterControllerStateComponent.self] { velocity = state.clippedVelocity }
         }
     }
 
@@ -260,9 +265,12 @@ enum GeometricMover {
         }
     }
 
-    /// Upstream's mesh loader through tinyobjloader, which fans polygons into triangles.
+    static func meshURL(_ name: String) -> URL? { Bundle.module.url(forResource: name, withExtension: "obj", subdirectory: "Meshes") }
+
+    /// Upstream's mesh loader through tinyobjloader, which triangulates polygons by ear clipping:
+    /// the stairs' sides are concave.
     static func loadOBJ(_ name: String) -> Mesh {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "obj", subdirectory: "Meshes"),
+        guard let url = meshURL(name),
               let text = try? String(contentsOf: url, encoding: .utf8) else { return Mesh(positions: [], indices: []) }
         var mesh = Mesh(positions: [], indices: [])
         for line in text.split(whereSeparator: \.isNewline) {
@@ -271,12 +279,48 @@ enum GeometricMover {
                 mesh.positions.append([x, y, z])
             } else if parts.first == "f" {
                 let face = parts.dropFirst().compactMap { $0.split(separator: "/").first.flatMap { UInt32($0) }.map { $0 - 1 } }
-                for i in stride(from: 1, to: max(face.count - 1, 1), by: 1) {
-                    mesh.indices += [face[0], face[i], face[i + 1]]
-                }
+                mesh.indices += triangulate(face, mesh.positions)
             }
         }
         return mesh
+    }
+
+    /// Ear clipping of a planar polygon, keeping its winding.
+    static func triangulate(_ face: [UInt32], _ positions: [SIMD3<Float>]) -> [UInt32] {
+        guard face.count > 3 else { return face.count == 3 ? face : [] }
+        let p = face.map { positions[Int($0)] }
+        // Newell's normal, then the plane of its largest component
+        var n = SIMD3<Float>.zero
+        for i in p.indices { let a = p[i], b = p[(i + 1) % p.count]; n += SIMD3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)) }
+        let drop = abs(n.x) > abs(n.y) ? (abs(n.x) > abs(n.z) ? 0 : 2) : (abs(n.y) > abs(n.z) ? 1 : 2)
+        let sign: Float = n[drop] < 0 ? -1 : 1
+        let flat = p.map { v -> SIMD2<Float> in
+            switch drop { case 0: [v.y, v.z]; case 1: [v.z, v.x]; default: [v.x, v.y] }
+        }
+        func cross(_ o: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { ((a - o).x * (b - o).y - (a - o).y * (b - o).x) * sign }
+        var ring = Array(face.indices), out: [UInt32] = []
+        var guardCount = 0
+        while ring.count > 3, guardCount < 4 * face.count {
+            guardCount += 1
+            var clipped = false
+            for k in ring.indices {
+                let i = ring[(k + ring.count - 1) % ring.count], j = ring[k], l = ring[(k + 1) % ring.count]
+                guard cross(flat[i], flat[j], flat[l]) > 1e-9 else { continue }
+                // No other vertex inside the ear
+                let inside = ring.contains { m in
+                    m != i && m != j && m != l && cross(flat[i], flat[j], flat[m]) >= 0
+                        && cross(flat[j], flat[l], flat[m]) >= 0 && cross(flat[l], flat[i], flat[m]) >= 0
+                }
+                guard !inside else { continue }
+                out += [face[i], face[j], face[l]]
+                ring.remove(at: k)
+                clipped = true
+                break
+            }
+            if !clipped { break }
+        }
+        if ring.count == 3 { out += ring.map { face[$0] } }
+        return out
     }
 
     /// `b3CreateTorusMesh`: a ring in the xy plane.
