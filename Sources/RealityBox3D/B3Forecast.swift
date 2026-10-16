@@ -56,9 +56,9 @@ extension B3World {
         Self.installContactRules(on: copy, settings, oneWay: oneWay)
         // The copy steps as the world does, sequential impacts included, on its own shapes.
         let impacts = settings.sequentialImpacts ? B3Forecast.Impacts(
-            shapes: records.values.flatMap(\.shapeIds).map { var s = $0; s.world0 = copy.index1 &- 1; return s },
+            shapes: records.values.filter(\.isEnabled).flatMap(\.shapeIds).map { var s = $0; s.world0 = copy.index1 &- 1; return s },
             threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
-            slop: 0.005 * b3GetLengthUnitsPerMeter()) : nil
+            slop: SequentialImpacts.slop) : nil
         return B3Forecast(player: player, worldId: copy, bodies: bodies, kinematics: kinematics,
                           timeStep: Float(1 / settings.fixedRate), subSteps: Int32(settings.subStepCount),
                           oneWay: oneWay, oneWaySources: sources, impacts: impacts,
@@ -117,19 +117,32 @@ public final class B3Forecast {
                 let parts = max(subSteps, 1), dt = timeStep / Float(parts)
                 for part in 0..<parts {
                     // The snapshot holds the forces for the first substep; the rest get them again.
-                    if stepCount == 0, part > 0 { pendingForces.apply() }
+                    // Winds are not in the snapshot: they reach Box3D only from the ledger.
+                    if stepCount == 0 { if part > 0 { pendingForces.apply() } else { pendingForces.applyWinds() } }
                     if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
                     SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes, world: worldId, dt: dt, slop: impacts.slop), dt: dt,
                                               threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop,
                                               oneWay: oneWaySources.isEmpty ? nil : oneWay,
                                               moverSpeed: SequentialImpacts.moverSpeed(of: impacts.shapes))
                     b3World_Step(worldId, dt, 1)
+                    breakJoints()
                 }
             } else {
                 if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
                 b3World_Step(worldId, timeStep, subSteps)
+                breakJoints()
             }
             stepCount += 1
+        }
+    }
+
+    /// Box3D only reports the joints over their break limit; the world destroys them after each
+    /// of its steps, and so does the copy, so a joint that breaks lets go in the forecast too.
+    private func breakJoints() {
+        let events = b3World_GetJointEvents(worldId)
+        for i in 0..<Int(events.count) {
+            let joint = events.jointEvents[i].jointId
+            if b3Joint_IsValid(joint) { b3DestroyJoint(joint, true) }
         }
     }
 

@@ -1,3 +1,4 @@
+import Foundation
 import CBox3D
 import RealityKit
 import simd
@@ -89,16 +90,18 @@ extension MeshResource {
             return try hullMesh(hull, shape: shape)
         case .heightField(let heights, let countX, let countZ, let scale):
             let grid = B3ShapeResource.heightFieldTriangles(heights: heights, countX: countX, countZ: countZ, scale: scale)
-            return try .generate(from: [creased(grid.positions.map { shape.rotation.act($0) + shape.translation }, grid.indices)])
+            return try .generate(from: [try creased(grid.positions.map { shape.rotation.act($0) + shape.translation }, grid.indices)])
         case .staticMesh(let positions, let indices):
-            return try .generate(from: [creased(positions.map { shape.rotation.act($0) + shape.translation }, indices)])
+            return try .generate(from: [try creased(positions.map { shape.rotation.act($0) + shape.translation }, indices)])
         }
     }
 
     /// Normals that keep hard edges: each corner averages the faces around its vertex that turn
     /// less than `crease` from its own face. Without normals RealityKit smooths across every
     /// shared vertex, smearing the shading of stairs and boxes built as meshes.
-    static func creased(_ positions: [SIMD3<Float>], _ indices: [UInt32], crease degrees: Float = 30) -> MeshDescriptor {
+    static func creased(_ positions: [SIMD3<Float>], _ indices: [UInt32], crease degrees: Float = 30) throws -> MeshDescriptor {
+        // An index past the vertices throws, as RealityKit's own mesh generation does
+        guard indices.allSatisfy({ Int($0) < positions.count }) else { throw CocoaError(.coderInvalidValue) }
         let triangles = indices.count / 3
         var faceNormals: [SIMD3<Float>] = [], unit: [SIMD3<Float>] = []
         var around = [[Int]](repeating: [], count: positions.count)

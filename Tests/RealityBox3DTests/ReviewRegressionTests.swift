@@ -539,6 +539,29 @@ import CBox3D
         _ = subs
     }
 
+    /// Bad mesh indices throw from the render-mesh builder instead of trapping.
+    @Test func badMeshIndicesThrow() {
+        let shape = B3ShapeResource.generateStaticMesh(positions: [.zero, [1, 0, 0], [0, 0, 1]], faceIndices: [UInt32(0), 1, 7])
+        #expect(throws: (any Error).self) { try MeshResource.generate(from: shape) }
+    }
+
+    /// Turning a one-way platform keeps what rests on it touching: only switching one-way on or
+    /// off rebuilds its shapes.
+    @Test func turningOneWayKeepsContacts() {
+        let r = root()
+        let platform = body(r, [.generateBox(size: [4, 0.2, 4])], mode: .static)
+        platform.components[B3CollisionComponent.self]?.oneWayDirection = [0, 1, 0]
+        let crate = body(r, [.generateBox(size: [0.5, 0.5, 0.5])], at: [0, 0.35, 0])
+        let w = world(r)
+        var ended = 0
+        let sub = w.subscribe(to: B3CollisionEvents.Ended.self, on: crate) { _ in ended += 1 }
+        frames(w, [platform, crate], 30)
+        platform.components[B3CollisionComponent.self]?.oneWayDirection = simd_normalize(SIMD3<Float>(0, 1, 0.05))
+        frames(w, [platform, crate], 10)
+        #expect(ended == 0)
+        _ = sub
+    }
+
     /// A belt started under sleeping cargo carries it.
     @Test func startingABeltWakesItsCargo() {
         let r = root()

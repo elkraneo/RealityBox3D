@@ -61,6 +61,18 @@ public struct B3JointBreakLimit: Equatable, Sendable {
     public init(force: Float? = nil, torque: Float? = nil) { self.force = force; self.torque = torque }
 }
 
+extension Optional where Wrapped == B3JointBreakLimit {
+    /// Box3D's thresholds, which must be finite and not negative: nil, infinity and NaN never
+    /// break, a negative limit breaks under any load, as zero.
+    var b3Thresholds: (force: Float, torque: Float) {
+        func threshold(_ v: Float?) -> Float {
+            guard let v, v.isFinite else { return .greatestFiniteMagnitude }
+            return max(v, 0)
+        }
+        return (threshold(self?.force), threshold(self?.torque))
+    }
+}
+
 /// Box3D extension: drives a joint at a speed, up to a maximum torque or force. A motor with speed
 /// zero acts as joint friction.
 public struct B3JointMotor: Equatable, Sendable {
@@ -393,15 +405,16 @@ extension B3World {
     var jointIds: [b3JointId] { jointSlots.compactMap { $0.id }.filter(b3Joint_IsValid) }
 
     private func samePinsAndType(_ a: any B3PhysicsJoint, _ b: any B3PhysicsJoint) -> Bool {
-        type(of: a) == type(of: b) && a.pin0 == b.pin0 && a.pin1 == b.pin1
+        B3World.isSameJoint(a, b)
             && a.checksForInternalCollisions == b.checksForInternalCollisions && a.constraintHertz == b.constraintHertz
             && a.constraintDampingRatio == b.constraintDampingRatio
     }
 
     /// Applies a joint's parameters through Box3D's setters. False if a change needs a rebuild.
     private func update(_ id: b3JointId, to joint: any B3PhysicsJoint) -> Bool {
-        b3Joint_SetForceThreshold(id, joint.breakLimit?.force ?? .greatestFiniteMagnitude)
-        b3Joint_SetTorqueThreshold(id, joint.breakLimit?.torque ?? .greatestFiniteMagnitude)
+        let thresholds = joint.breakLimit.b3Thresholds
+        b3Joint_SetForceThreshold(id, thresholds.force)
+        b3Joint_SetTorqueThreshold(id, thresholds.torque)
         switch joint {
         case let j as B3PhysicsRevoluteJoint:
             b3RevoluteJoint_EnableLimit(id, j.angularLimit != nil)
@@ -533,8 +546,7 @@ extension B3World {
             if let h = joint.constraintHertz { d.constraintHertz = h }
             if let z = joint.constraintDampingRatio { d.constraintDampingRatio = z }
             // Box3D reports a joint whose load passes these; the world then breaks it.
-            d.forceThreshold = joint.breakLimit?.force ?? .greatestFiniteMagnitude
-            d.torqueThreshold = joint.breakLimit?.torque ?? .greatestFiniteMagnitude
+            (d.forceThreshold, d.torqueThreshold) = joint.breakLimit.b3Thresholds
         }
         switch joint {
         case let j as B3PhysicsRevoluteJoint:

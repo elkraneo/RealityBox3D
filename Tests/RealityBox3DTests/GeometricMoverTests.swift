@@ -168,14 +168,14 @@ import simd
     }
 
     /// A cube given as a triangle mesh renders with flat faces: its normals keep the edges hard.
-    @Test func meshNormalsKeepHardEdges() {
+    @Test func meshNormalsKeepHardEdges() throws {
         var positions: [SIMD3<Float>] = []
         for x: Float in [-1, 1] { for y: Float in [-1, 1] { for z: Float in [-1, 1] { positions.append([x, y, z]) } } }
         // The 12 triangles of the cube, wound outward
         let quads: [[UInt32]] = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]]
         var indices: [UInt32] = []
         for q in quads { indices += [q[0], q[1], q[2], q[0], q[2], q[3]] }
-        let d = MeshResource.creased(positions, indices)
+        let d = try MeshResource.creased(positions, indices)
         let normals = d.normals!.elements
         let points = d.positions.elements
         for (n, p) in zip(normals, points) {

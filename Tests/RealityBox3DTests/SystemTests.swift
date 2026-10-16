@@ -58,6 +58,36 @@ final class SystemHarness {
 
 @MainActor
 @Suite(.serialized) struct SystemTests {
+
+    /// A full scan while a body is disabled must keep it, with its velocity, as RealityKit's
+    /// query may leave disabled entities out.
+    @Test func fullScanKeepsDisabledBodies() async throws {
+        QueryProbe.registerSystem()
+        let h = try SystemHarness()
+        var s = h.root.components[B3PhysicsSimulationComponent.self]!
+        s.gravity = .zero
+        h.root.components.set(s)
+        let ball = h.box(at: .zero)
+        ball.components.set(B3PhysicsMotionComponent(linearVelocity: [2, 0, 0]))
+        try await h.frames(5)
+        ball.isEnabled = false
+        try await h.frames(2)
+        // A second simulation root makes the system rescan the scene
+        QueryProbe.seen = nil
+        try await h.frames(1)
+        // The system's full scan relies on this: a body left out would be destroyed, not disabled
+        #expect(QueryProbe.seen?.contains(ball.id) == true, "RealityKit's query left the disabled entity out")
+        let other = Entity()
+        h.renderer.entities.append(other)
+        try await h.frames(1)
+        other.components.set(B3PhysicsSimulationComponent())
+        try await h.frames(2)
+        #expect(h.world?.record(for: ball) != nil, "the disabled body was dropped")
+        ball.isEnabled = true
+        try await h.frames(1)
+        let v = ball.b3.linearVelocity ?? .zero
+        #expect(abs(v.x - 2) < 0.01, "resumed at \(v)")
+    }
     @Test func sleepingPileReadsNothing() async throws {
         let h = try SystemHarness()
         h.ground()
@@ -135,5 +165,16 @@ final class SystemHarness {
         try await h.frames(120)
         let p = b.position(relativeTo: h.root)
         #expect(abs(p.x - 3) < 0.02 && abs(p.y - 0.1) < 0.02, "\(p)")
+    }
+}
+
+/// Records which entities RealityKit's query returns, disabled ones included or not.
+struct QueryProbe: System {
+    nonisolated(unsafe) static var seen: Set<Entity.ID>?
+    init(scene: RealityKit.Scene) {}
+    func update(context: SceneUpdateContext) {
+        // Other tests' scenes update too: collect across them
+        let ids = context.entities(matching: EntityQuery(where: .has(B3PhysicsBodyComponent.self)), updatingSystemWhen: .rendering).map(\.id)
+        Self.seen = (Self.seen ?? []).union(ids)
     }
 }

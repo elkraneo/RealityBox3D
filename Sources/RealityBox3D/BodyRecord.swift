@@ -161,7 +161,8 @@ final class BodyRecord {
 
         let geometryChanged = newCollision.shapes != collision.shapes || !newScale.isClose(to: scale)
             || newCollision.mode != collision.mode // sensor-ness is fixed at shape creation
-            || newCollision.oneWayDirection != collision.oneWayDirection // as is pre-solve
+            // Pre-solve is fixed at shape creation too; the direction itself is read every step
+            || (newCollision.oneWayDirection == nil) != (collision.oneWayDirection == nil)
             // Shapes with their own surfaces keep them: rebuild rather than overwrite them all.
             || (new.material != old.material && newCollision.shapes.contains { $0.material != nil || $0.triangleMaterials != nil })
             || newCollision.bakesCompound != collision.bakesCompound

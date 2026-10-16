@@ -186,9 +186,12 @@ public struct B3PhysicsSimulationComponent: Component, Equatable, Sendable {
     public var restitutionCombine: B3MaterialCombine = .maximum
     /// Box3D extension: resolves sphere impacts pair by pair before each step, so momentum passes
     /// along a row of touching balls, as in a Newton's cradle or a pool break, instead of being
-    /// shared among them. Costs a query per awake sphere per step. One-way shapes, and bodies held by
-    /// joints other than a pendulum's single revolute or spherical joint to a static body, are left
-    /// to Box3D's solver.
+    /// shared among them. Before every substep it walks all the world's shapes, sleeping and static
+    /// ones included, to find the moving spheres, then queries around each, so its cost grows with
+    /// the world, not only with the spheres: turn it on for worlds that need it. It also splits each
+    /// step into one Box3D step per substep. One-way shapes, and bodies held by joints other than a
+    /// pendulum's single revolute or spherical joint to a fixed body (static, or a kinematic one at
+    /// rest), are left to Box3D's solver.
     public var sequentialImpacts: Bool = false
 
     public init() {}

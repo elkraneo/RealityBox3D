@@ -118,6 +118,39 @@ import CBox3D
         #expect(simd_length(bob.position) < 1e-2, "the bob moved to \(bob.position)")
     }
 
+    // The same pendulum hung from a plain entity, whose pin Box3D holds with a kinematic anchor
+    // at rest: still a pendulum to the pass.
+    @Test func pendulumsOnPlainAnchors() {
+        let r = root()
+        let anchor = Entity()
+        anchor.position = [0, 1, 0]
+        r.addChild(anchor)
+        let bob = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let ball = body(r, .generateSphere(radius: 0.1), at: [0, -0.3, 0], velocity: [0, 2, 0])
+        let hinge = simd_quatf(from: [1, 0, 0], to: [0, 0, 1])
+        try? B3PhysicsRevoluteJoint(pin0: anchor.pins.set(named: "a", position: .zero, orientation: hinge),
+                                    pin1: bob.pins.set(named: "b", position: [0, 1, 0], orientation: hinge)).addToSimulation()
+        let w = world(r)
+        for _ in 0..<20 { w.update(entities: [bob, ball], deltaTime: 1.0 / 60) }
+        #expect((ball.b3.linearVelocity?.y ?? 0) < -1.9, "the ball left at \(ball.b3.linearVelocity ?? .zero)")
+        #expect(simd_length(bob.position) < 1e-2, "the bob moved to \(bob.position)")
+    }
+
+    // Winds called many times before a step reach every substep alike, the first included.
+    @Test func windIsCappedOnEverySubstep() {
+        func speed(calls: Int) -> Float {
+            let r = root { $0.gravity = .zero; $0.subStepCount = 4 }
+            let plate = body(r, .generateBox(size: [0.5, 0.5, 0.05]), at: .zero)
+            let w = world(r)
+            w.update(entities: [plate], deltaTime: 0)
+            for _ in 0..<calls { plate.b3.applyWind([0, 0, 5], drag: 1, lift: 0, maxSpeed: 10) }
+            w.update(entities: [plate], deltaTime: 1.0 / 60)
+            return plate.b3.linearVelocity?.z ?? 0
+        }
+        #expect(speed(calls: 8) > 0)
+        #expect(abs(speed(calls: 200) - speed(calls: 8)) < 1e-5, "200 calls \(speed(calls: 200)), 8 calls \(speed(calls: 8))")
+    }
+
     // Impacts the pass resolves still reach collision subscribers as hits.
     @Test func resolvedImpactsAreHits() {
         let r = root()

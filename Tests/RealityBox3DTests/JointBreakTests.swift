@@ -47,6 +47,43 @@ import simd
         _ = sub
     }
 
+    /// Infinite and NaN limits never break, a negative one breaks at once; none reaches Box3D,
+    /// whose debug build asserts on them.
+    @Test func oddLimitsAreSafe() throws {
+        for (limit, breaks) in [(Float.infinity, false), (.nan, false), (-1, true)] {
+            let (root, bob, w) = try pendulum(.init(force: limit, torque: limit))
+            frames(w, bob, 10)
+            #expect((root.components[B3PhysicsJointsComponent.self]?.joints.isEmpty ?? true) == breaks, "limit \(limit)")
+            // And through the in-place update
+            let (root2, bob2, w2) = try pendulum(.init(force: 100))
+            frames(w2, bob2, 2)
+            var j = root2.components[B3PhysicsJointsComponent.self]!.joints[0] as! B3PhysicsSphericalJoint
+            j.breakLimit = .init(force: limit)
+            root2.components.set(B3PhysicsJointsComponent(joints: [j]))
+            frames(w2, bob2, 10)
+            #expect((root2.components[B3PhysicsJointsComponent.self]?.joints.isEmpty ?? true) == breaks, "updated to \(limit)")
+        }
+    }
+
+    /// A forecast breaks joints as the world does: both drop the ball.
+    @Test func forecastsBreakJoints() throws {
+        // Too weak for the 41 N ball: it breaks on the first step
+        let (root, bob, w) = try pendulum(.init(force: 20))
+        defer { withExtendedLifetime(root) {} } // the world holds its root weakly
+        w.update(entities: [bob], deltaTime: 0)
+        // Before any step, so the joint can only break inside the forecast
+        #expect(w.jointIds.count == 1)
+        let forecast = try #require(w.forecast())
+        forecast.step(120)
+        // Step for step: frames of 1/60 s don't add up to whole fixed steps exactly
+        var events: [any B3CollisionEvent] = []
+        for _ in 0..<120 { w.step(events: &events) }
+        let ahead = try #require(forecast.transform(of: bob)).translation
+        #expect(w.jointIds.isEmpty, "the joint held in the world")
+        #expect(ahead.y < 0, "the forecast kept the ball hanging at \(ahead)")
+        #expect(simd_distance(ahead, bob.position) < 0.05, "forecast \(ahead), world \(bob.position)")
+    }
+
     @Test func breaksOverItsLimit() throws {
         let (root, bob, w) = try pendulum(.init(force: 20))
         var events: [B3JointEvents.Broke] = []

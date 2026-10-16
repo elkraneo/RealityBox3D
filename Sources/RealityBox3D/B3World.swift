@@ -279,7 +279,7 @@ public final class B3World {
         let partDt = fixedDt / Float(parts)
         for part in 0..<parts {
             // Box3D clears applied forces after each of its steps; they act on the whole fixed step.
-            if part > 0 { pendingForces.apply() }
+            if part > 0 { pendingForces.apply() } else { pendingForces.applyWinds() }
             // Each step judges one-way contacts by where the surfaces point at its start.
             refreshOneWayShapes()
             if settings.sequentialImpacts { resolveImpacts(dt: partDt) }

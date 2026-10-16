@@ -85,9 +85,11 @@ extension B3BodyProxy {
         } ?? wind
         guard w.x.isFinite, w.y.isFinite, w.z.isFinite, drag.isFinite, lift.isFinite, maxSpeed.isFinite, maxSpeed >= 0 else { return }
         for s in record.shapeIds {
-            b3Shape_ApplyWind(s, b3Vec3(w), drag, lift, maxSpeed, true)
+            // Kept forces reach Box3D before each substep, the first included
             if record.world.keepsForces {
                 record.world.pendingForces.add(.init(shape: s, wind: w, drag: drag, lift: lift, maxSpeed: maxSpeed))
+            } else {
+                b3Shape_ApplyWind(s, b3Vec3(w), drag, lift, maxSpeed, true)
             }
         }
     }

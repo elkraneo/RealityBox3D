@@ -234,12 +234,15 @@ enum SequentialImpacts {
         let locks = b3Body_GetMotionLocks(id)
         if locks.linearX || locks.linearY || locks.linearZ || locks.angularX || locks.angularY || locks.angularZ { return .unsupported }
         guard let joint = holding.first else { return .free(inverseMass: 1 / mass, inverseInertia: inverseInertia) }
-        // A pendulum: one revolute or spherical joint to a static body.
+        // A pendulum: one revolute or spherical joint to a fixed body. A static body is fixed, and
+        // so is a kinematic one standing still, such as the anchor of a pin on a plain entity.
         let type = b3Joint_GetType(joint)
         let isA = b3Joint_GetBodyA(joint) == id
-        guard holding.count == 1, type == b3_revoluteJoint || type == b3_sphericalJoint,
-              b3Body_GetType(isA ? b3Joint_GetBodyB(joint) : b3Joint_GetBodyA(joint)) == b3_staticBody
-        else { return .unsupported }
+        let other = isA ? b3Joint_GetBodyB(joint) : b3Joint_GetBodyA(joint)
+        let isFixed = b3Body_GetType(other) == b3_staticBody
+            || (b3Body_GetType(other) == b3_kinematicBody && simd_length_squared(b3Body_GetLinearVelocity(other).simd) == 0
+                && simd_length_squared(b3Body_GetAngularVelocity(other).simd) == 0)
+        guard holding.count == 1, type == b3_revoluteJoint || type == b3_sphericalJoint, isFixed else { return .unsupported }
         // Free to swing: limits, motors and springs resist what the pass would give, and a joint
         // that can break must feel the impact's load.
         let restrained = type == b3_revoluteJoint
@@ -295,14 +298,17 @@ extension B3World {
     func resolveImpacts(dt: Float) {
         let shapes = records.values.filter(\.isEnabled).flatMap(\.shapeIds)
         impactHits = SequentialImpacts.resolve(
-            world: id, spheres: SequentialImpacts.spheres(of: shapes, world: id, dt: dt, slop: 0.005 * b3GetLengthUnitsPerMeter()),
+            world: id, spheres: SequentialImpacts.spheres(of: shapes, world: id, dt: dt, slop: SequentialImpacts.slop),
             dt: dt, threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
-            slop: 0.005 * b3GetLengthUnitsPerMeter(), oneWay: oneWayRecords.isEmpty ? nil : oneWayShapes,
+            slop: SequentialImpacts.slop, oneWay: oneWayRecords.isEmpty ? nil : oneWayShapes,
             moverSpeed: SequentialImpacts.moverSpeed(of: shapes), hitThreshold: b3World_GetHitEventThreshold(id))
     }
 }
 
 extension SequentialImpacts {
+    /// Box3D's linear slop, 0.005 length units, scaled by the process-wide length unit.
+    static var slop: Float { 0.005 * b3GetLengthUnitsPerMeter() }
+
     /// The spheres the pass starts from: those among `shapes` on awake dynamic bodies, and the
     /// dynamic spheres, asleep too, that other moving shapes among them could reach within `dt`.
     static func spheres(of shapes: [b3ShapeId], world: b3WorldId, dt: Float, slop: Float) -> [b3ShapeId] {
@@ -356,11 +362,18 @@ struct PendingForces {
     mutating func add(torque: SIMD3<Float>, to body: b3BodyId) { loads[body, default: .init()].torque += torque }
     mutating func add(_ wind: Wind) { winds[wind.shape] = (wind, (winds[wind.shape]?.count ?? 0) + 1) }
 
+    /// Before a later substep: the loads, which Box3D already has for the first, and the winds.
     func apply() {
         for (body, load) in loads where b3Body_IsValid(body) {
             b3Body_ApplyForceToCenter(body, b3Vec3(load.force), true)
             b3Body_ApplyTorque(body, b3Vec3(load.torque), true)
         }
+        applyWinds()
+    }
+
+    /// Winds go only through the ledger, the first substep's too, so every substep gets the same
+    /// capped number of them.
+    func applyWinds() {
         for (shape, (w, count)) in winds where b3Shape_IsValid(shape) {
             // Calls repeated while paused would pile up; a step sees at most a few per shape.
             for _ in 0..<min(count, 8) { b3Shape_ApplyWind(shape, b3Vec3(w.wind), w.drag, w.lift, w.maxSpeed, true) }
