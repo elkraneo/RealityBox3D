@@ -33,6 +33,9 @@ public final class B3World {
     /// Dynamic bodies that moved in the latest step, or need one more write to settle.
     private var active: [Entity.ID: BodyRecord] = [:]
     private var accumulator: Double = 0
+    /// How far the frame's time runs past the last fixed step, in steps (0 … 1): the blend
+    /// between the last two step poses that bodies are drawn at. 1 without interpolation.
+    public private(set) var interpolationAlpha: Float = 1
     private var stepIndex = 0
     private var frameIndex = 0
     private var subscriptions: [UUID: (B3CollisionEventKind, Entity.ID?, (any B3CollisionEvent) -> Void)] = [:]
@@ -190,6 +193,7 @@ public final class B3World {
 
         // Outbound sync, only for bodies Box3D reported as moving.
         let alpha = settings.interpolatesPoses ? Float(accumulator / fixedDt) : 1
+        interpolationAlpha = alpha
         writeActive(alpha: alpha, root: root)
 
         // Events after poses are final, so handlers see consistent transforms.
@@ -378,16 +382,18 @@ public final class B3World {
 
     private func collectEvents(into out: inout [any B3CollisionEvent]) {
         let c = b3World_GetContactEvents(id)
-        for i in 0..<Int(c.beginCount) {
-            let e = c.beginEvents[i]
-            if let a = entity(for: e.shapeIdA), let b = entity(for: e.shapeIdB) {
-                out.append(B3CollisionEvents.Began(entityA: a, entityB: b))
-            }
-        }
+        // Ends first: a contact that ends and one that begins in the same step are the old and new
+        // contact of a pair, as when a body's shapes are rebuilt, so the pair is touching after.
         for i in 0..<Int(c.endCount) {
             let e = c.endEvents[i]
             if let a = entity(for: e.shapeIdA), let b = entity(for: e.shapeIdB) {
                 out.append(B3CollisionEvents.Ended(entityA: a, entityB: b))
+            }
+        }
+        for i in 0..<Int(c.beginCount) {
+            let e = c.beginEvents[i]
+            if let a = entity(for: e.shapeIdA), let b = entity(for: e.shapeIdB) {
+                out.append(B3CollisionEvents.Began(entityA: a, entityB: b))
             }
         }
         var hitPairs = Set<SequentialImpacts.Pair>()
@@ -409,16 +415,17 @@ public final class B3World {
             }
         }
         let s = b3World_GetSensorEvents(id)
-        for i in 0..<Int(s.beginCount) {
-            let e = s.beginEvents[i]
-            if let a = entity(for: e.sensorShapeId), let b = entity(for: e.visitorShapeId) {
-                out.append(B3CollisionEvents.Began(entityA: a, entityB: b))
-            }
-        }
+        // Ends first, as for contacts
         for i in 0..<Int(s.endCount) {
             let e = s.endEvents[i]
             if let a = entity(for: e.sensorShapeId), let b = entity(for: e.visitorShapeId) {
                 out.append(B3CollisionEvents.Ended(entityA: a, entityB: b))
+            }
+        }
+        for i in 0..<Int(s.beginCount) {
+            let e = s.beginEvents[i]
+            if let a = entity(for: e.sensorShapeId), let b = entity(for: e.visitorShapeId) {
+                out.append(B3CollisionEvents.Began(entityA: a, entityB: b))
             }
         }
     }

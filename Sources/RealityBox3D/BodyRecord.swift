@@ -167,8 +167,8 @@ final class BodyRecord {
             || newCollision.bakesCompound != collision.bakesCompound
             || rebuildsForMode
             || (new.material != old.material && newCollision.bakesCompound) // a compound's materials are baked
-            // A new belt speed must reach bodies already resting on the belt, maybe asleep: new
-            // shapes drop the old contacts and wake them
+            // Box3D reads a belt's speed into a contact only when it refreshes it, which contact
+            // recycling skips for cargo at rest: new shapes make new contacts, and wake the cargo
             || new.material.tangentVelocity != old.material.tangentVelocity
         let oldCollision = collision
         collision = newCollision
@@ -202,8 +202,10 @@ final class BodyRecord {
             }
         }
         if let kept, new.mode != .static {
-            b3Body_SetLinearVelocity(bodyId, kept.0)
-            b3Body_SetAngularVelocity(bodyId, kept.1)
+            // Without the axes locked since: Box3D's velocity setters do not mask locks
+            let lin = kept.0.simd * new.unlockedLinear, ang = kept.1.simd * new.unlockedAngular
+            b3Body_SetLinearVelocity(bodyId, b3Vec3(lin))
+            b3Body_SetAngularVelocity(bodyId, b3Vec3(ang))
         }
         b3Body_SetAwake(bodyId, true)
     }
@@ -636,6 +638,13 @@ extension PhysicsBodyMode {
 extension B3PhysicsBodyComponent {
     var effectiveGravityScale: Float { isAffectedByGravity ? gravityScale : 0 }
     var effectiveBullet: Bool { isBullet || (isContinuousCollisionDetectionEnabled && mode == .dynamic) }
+    /// 1 on free axes, 0 on locked ones.
+    var unlockedLinear: SIMD3<Float> {
+        SIMD3(isTranslationLocked.x ? 0 : 1, isTranslationLocked.y ? 0 : 1, isTranslationLocked.z ? 0 : 1)
+    }
+    var unlockedAngular: SIMD3<Float> {
+        SIMD3(isRotationLocked.x ? 0 : 1, isRotationLocked.y ? 0 : 1, isRotationLocked.z ? 0 : 1)
+    }
     var motionLocks: b3MotionLocks {
         b3MotionLocks(linearX: isTranslationLocked.x, linearY: isTranslationLocked.y, linearZ: isTranslationLocked.z,
                       angularX: isRotationLocked.x, angularY: isRotationLocked.y, angularZ: isRotationLocked.z)

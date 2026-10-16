@@ -105,6 +105,11 @@ public struct DemoBuilder {
         scriptObject().onFixedStep.append(body)
     }
 
+    /// Code run every frame after the physics, with the world's `interpolationAlpha` final.
+    public mutating func afterPhysics(_ body: @escaping @MainActor (DemoContext) -> Void) {
+        scriptObject().afterPhysics.append(body)
+    }
+
     /// Makes the app's camera follow an entity.
     public mutating func follow(_ entity: Entity) {
         scriptObject().follow = entity

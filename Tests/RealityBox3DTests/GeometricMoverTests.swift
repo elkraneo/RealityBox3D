@@ -135,6 +135,57 @@ import simd
         #expect(concave > 0)
     }
 
+    /// With sleeping off the slab never settles: the 12 s fallback must put it back at its spawn,
+    /// 30 m up, and the physics must not overwrite that.
+    @Test func slabRespawnsWithoutSleeping() {
+        let runner = DemoRunner(DemoScene.named("Geometric Mover")!) { $0.isSleepEnabled = false }
+        let slab = entity(runner, "slab")
+        runner.advance(frames: 690)
+        #expect(slab.position.y < 5, "slab still falling at \(slab.position)")
+        var respawned = false
+        for _ in 0..<90 { runner.advance(); respawned = respawned || slab.position.y > 25 }
+        #expect(respawned, "slab at \(slab.position)")
+    }
+
+    /// At 120 fps the character moves on every frame, not on every other one: it is drawn between
+    /// its step positions as the bodies are.
+    @Test func glidesAtHighFrameRates() {
+        let runner = DemoRunner(DemoScene.named("Geometric Mover")!)
+        let c = runner.root.children[0].children.first { $0.name == "character" }!
+        runner.advance(frames: 60, deltaTime: 1.0 / 120)
+        drive(runner, frames: 0)
+        runner.advance(frames: 120, deltaTime: 1.0 / 120) // up to walking speed
+        var steps: [Float] = []
+        var last = c.position.x
+        for _ in 0..<40 {
+            runner.advance(deltaTime: 1.0 / 120)
+            steps.append(c.position.x - last)
+            last = c.position.x
+        }
+        let mean = steps.reduce(0, +) / Float(steps.count)
+        #expect(mean > 0.04, "walking \(mean * 120) m/s")
+        for d in steps { #expect(abs(d - mean) < 0.3 * mean, "frame moved \(d), mean \(mean)") }
+    }
+
+    /// A cube given as a triangle mesh renders with flat faces: its normals keep the edges hard.
+    @Test func meshNormalsKeepHardEdges() {
+        var positions: [SIMD3<Float>] = []
+        for x: Float in [-1, 1] { for y: Float in [-1, 1] { for z: Float in [-1, 1] { positions.append([x, y, z]) } } }
+        // The 12 triangles of the cube, wound outward
+        let quads: [[UInt32]] = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]]
+        var indices: [UInt32] = []
+        for q in quads { indices += [q[0], q[1], q[2], q[0], q[2], q[3]] }
+        let d = MeshResource.creased(positions, indices)
+        let normals = d.normals!.elements
+        let points = d.positions.elements
+        for (n, p) in zip(normals, points) {
+            // Axis-aligned, pointing out of the face
+            #expect(abs(simd_length(n) - 1) < 1e-4)
+            #expect([abs(n.x), abs(n.y), abs(n.z)].filter { $0 > 0.999 }.count == 1, "normal \(n) at \(p)")
+            #expect(simd_dot(n, p) > 0)
+        }
+    }
+
     @Test func fallingOffTheEdgeStartsOver() {
         let (runner, c) = load(at: [0, 1.4, -19.5])
         drive(runner, forward: [0, 0, -1], frames: 120)

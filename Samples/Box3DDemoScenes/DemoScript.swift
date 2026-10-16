@@ -31,6 +31,7 @@ public struct DemoInput: Equatable, Sendable {
 public final class DemoScript {
     var onFrame: [@MainActor (DemoContext) -> Void] = []
     var onFixedStep: [@MainActor (DemoContext) -> Void] = []
+    var afterPhysics: [@MainActor (DemoContext) -> Void] = []
     private var stepSubscription: B3Subscription?
     private weak var subscribedWorld: B3World?
     var actions: [String: @MainActor (DemoContext) -> Void] = [:]
@@ -60,6 +61,11 @@ public final class DemoScript {
         time += deltaTime
     }
 
+    func late(root: Entity, world: B3World?) {
+        let ctx = DemoContext(root: root, world: world, time: time, deltaTime: 0, input: input, cameraForward: cameraForward)
+        for f in afterPhysics { f(ctx) }
+    }
+
     func perform(_ action: String, root: Entity, world: B3World?) {
         actions[action]?(DemoContext(root: root, world: world, time: time, deltaTime: 0, input: input, cameraForward: cameraForward))
     }
@@ -86,6 +92,21 @@ public struct DemoScriptSystem: System {
     @MainActor public static func register() {
         DemoScriptComponent.registerComponent()
         registerSystem()
+        DemoLateScriptSystem.registerSystem()
+    }
+}
+
+/// Runs scene code after the physics system has stepped and written poses, for what is drawn
+/// between steps, as the bodies' interpolated poses.
+public struct DemoLateScriptSystem: System {
+    public static var dependencies: [SystemDependency] { [.after(B3PhysicsSystem.self)] }
+    public init(scene: RealityKit.Scene) {}
+
+    public func update(context: SceneUpdateContext) {
+        for entity in context.entities(matching: DemoScriptSystem.query, updatingSystemWhen: .rendering) {
+            guard let root = entity.parent, let script = entity.components[DemoScriptComponent.self]?.script else { continue }
+            script.late(root: root, world: RealityBox3D.world(for: root))
+        }
     }
 }
 

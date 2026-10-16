@@ -89,16 +89,47 @@ extension MeshResource {
             return try hullMesh(hull, shape: shape)
         case .heightField(let heights, let countX, let countZ, let scale):
             let grid = B3ShapeResource.heightFieldTriangles(heights: heights, countX: countX, countZ: countZ, scale: scale)
-            var d = MeshDescriptor()
-            d.positions = MeshBuffer(grid.positions.map { shape.rotation.act($0) + shape.translation })
-            d.primitives = .triangles(grid.indices)
-            return try .generate(from: [d])
+            return try .generate(from: [creased(grid.positions.map { shape.rotation.act($0) + shape.translation }, grid.indices)])
         case .staticMesh(let positions, let indices):
-            var d = MeshDescriptor()
-            d.positions = MeshBuffer(positions.map { shape.rotation.act($0) + shape.translation })
-            d.primitives = .triangles(indices)
-            return try .generate(from: [d])
+            return try .generate(from: [creased(positions.map { shape.rotation.act($0) + shape.translation }, indices)])
         }
+    }
+
+    /// Normals that keep hard edges: each corner averages the faces around its vertex that turn
+    /// less than `crease` from its own face. Without normals RealityKit smooths across every
+    /// shared vertex, smearing the shading of stairs and boxes built as meshes.
+    static func creased(_ positions: [SIMD3<Float>], _ indices: [UInt32], crease degrees: Float = 30) -> MeshDescriptor {
+        let triangles = indices.count / 3
+        var faceNormals: [SIMD3<Float>] = [], unit: [SIMD3<Float>] = []
+        var around = [[Int]](repeating: [], count: positions.count)
+        faceNormals.reserveCapacity(triangles)
+        for t in 0..<triangles {
+            let a = positions[Int(indices[3 * t])], b = positions[Int(indices[3 * t + 1])], c = positions[Int(indices[3 * t + 2])]
+            let n = simd_cross(b - a, c - a) // area weighted
+            faceNormals.append(n)
+            let l = simd_length(n)
+            unit.append(l > 0 ? n / l : .zero)
+            for k in 0..<3 { around[Int(indices[3 * t + k])].append(t) }
+        }
+        let cosCrease = cos(degrees * .pi / 180)
+        var outPositions: [SIMD3<Float>] = [], outNormals: [SIMD3<Float>] = []
+        outPositions.reserveCapacity(indices.count)
+        outNormals.reserveCapacity(indices.count)
+        for t in 0..<triangles {
+            for k in 0..<3 {
+                let v = Int(indices[3 * t + k])
+                var n = SIMD3<Float>.zero
+                for f in around[v] where simd_dot(unit[f], unit[t]) >= cosCrease { n += faceNormals[f] }
+                let l = simd_length(n)
+                outPositions.append(positions[v])
+                outNormals.append(l > 0 ? n / l : unit[t])
+            }
+        }
+        var d = MeshDescriptor()
+        d.positions = MeshBuffer(outPositions)
+        d.normals = MeshBuffer(outNormals)
+        d.primitives = .triangles((0..<UInt32(outPositions.count)).map { $0 })
+        return d
     }
 
     @MainActor

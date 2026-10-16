@@ -508,6 +508,37 @@ import CBox3D
         #expect(simd_distance(b3Body_GetAngularVelocity(id).simd, [0, 0, 3]) < 1e-4)
     }
 
+    /// Restoring velocities after an edit leaves the axes the edit locked at zero.
+    @Test func editsKeepNewLocks() {
+        let r = root()
+        let e = body(r, [.generateSphere(radius: 0.5)], at: [0, 5, 0])
+        e.components.set(B3PhysicsMotionComponent(linearVelocity: [3, 0, 0], angularVelocity: .zero))
+        let w = world(r)
+        w.update(entities: [e], deltaTime: 0)
+        e.components[B3PhysicsBodyComponent.self]?.isTranslationLocked.x = true
+        w.update(entities: [e], deltaTime: 0)
+        #expect(b3Body_GetLinearVelocity(w.record(for: e)!.bodyId).x == 0)
+    }
+
+    /// Changing the belt speed keeps the cargo's contact: the old contact's Ended comes before the new one's Began.
+    @Test func beltSpeedKeepsContacts() {
+        let r = root()
+        let belt = body(r, [.generateBox(size: [20, 0.5, 4])], mode: .static)
+        let crate = body(r, [.generateBox(size: [1, 1, 1])], at: [0, 0.75, 0])
+        let w = world(r)
+        // As an app tracks it: a set of touching entities, or here a flag
+        var touching = false
+        let subs = [w.subscribe(to: B3CollisionEvents.Began.self, on: crate) { _ in touching = true },
+                    w.subscribe(to: B3CollisionEvents.Ended.self, on: crate) { _ in touching = false }]
+        frames(w, [belt, crate], 30)
+        #expect(touching)
+        belt.components[B3PhysicsBodyComponent.self]?.material.tangentVelocity = [2, 0, 0]
+        frames(w, [belt, crate], 30)
+        #expect(touching, "the crate still rests on the belt")
+        #expect(crate.position.x > 0.3)
+        _ = subs
+    }
+
     /// A belt started under sleeping cargo carries it.
     @Test func startingABeltWakesItsCargo() {
         let r = root()

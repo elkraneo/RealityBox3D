@@ -116,9 +116,28 @@ enum GeometricMover {
         b.onFixedStep { ctx in
             guard let world = ctx.world else { return }
             let dt = Float(ctx.deltaTime)
+            // Moves start from the simulated position, not the drawn one, unless something placed
+            // the character since it was drawn: then from there
+            if character.position != mover.drawn { mover.current = character.position }
+            character.position = mover.current
+            mover.previous = mover.current
             mover.step(character, world: world, root: ctx.root, input: ctx.input, forward: ctx.cameraForward, dt: dt)
             // Not upstream's: walking off the level's edge starts over
             if character.position.y < -20 { mover.reset(character) }
+            mover.current = character.position
+        }
+        // Drawn between its last two step positions, as the bodies are, so it glides at any
+        // display rate instead of moving only on frames that step
+        b.afterPhysics { ctx in
+            let alpha = ctx.world?.interpolationAlpha ?? 1
+            character.position = simd_mix(mover.previous, mover.current, SIMD3(repeating: alpha))
+            mover.drawn = character.position
+        }
+        // Respawns move bodies, so they go in frame code, which the physics reads before it
+        // steps: moved inside a step, a body's pose would be overwritten by the step's result
+        b.onFrame { ctx in
+            let dt = Float(ctx.deltaTime)
+            guard dt > 0 else { return }
             if slabTimer.settled(slab, dt: dt) {
                 slab.position = slabSpawn
                 slab.orientation = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
@@ -165,9 +184,14 @@ enum GeometricMover {
         var velocity: SIMD3<Float> = .zero
         var pogoVelocity: Float = 0
         var onGround = false
+        /// The character's positions after the last two steps; the entity is drawn between them.
+        var previous = GeometricMover.start, current = GeometricMover.start, drawn = GeometricMover.start
 
         func reset(_ character: Entity) {
             character.position = GeometricMover.start
+            previous = GeometricMover.start
+            current = GeometricMover.start
+            drawn = GeometricMover.start
             velocity = .zero
             pogoVelocity = 0
         }

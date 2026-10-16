@@ -32,6 +32,9 @@ public final class DemoRunner {
             }
             if bodiesChanged { collectBodies() }
             world.update(entities: bodies, deltaTime: deltaTime)
+            for child in root.children {
+                child.components[DemoScriptComponent.self]?.script.late(root: root, world: world)
+            }
         }
     }
 
