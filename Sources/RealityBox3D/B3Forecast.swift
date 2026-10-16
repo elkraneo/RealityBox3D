@@ -113,7 +113,8 @@ public final class B3Forecast {
                 for _ in 0..<parts {
                     if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
                     SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes), dt: dt,
-                                              threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop)
+                                              threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop,
+                                              oneWay: oneWaySources.isEmpty ? nil : oneWay)
                     b3World_Step(worldId, dt, 1)
                 }
             } else {

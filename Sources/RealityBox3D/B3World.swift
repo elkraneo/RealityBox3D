@@ -273,7 +273,9 @@ public final class B3World {
         // pass, so a ball stops within a substep's travel of the one it strikes.
         let parts = settings.sequentialImpacts ? max(settings.subStepCount, 1) : 1
         let partDt = fixedDt / Float(parts)
-        for _ in 0..<parts {
+        for part in 0..<parts {
+            // Box3D clears applied forces after each of its steps; they act on the whole fixed step.
+            if part > 0 { reapplyForces() }
             // Each step judges one-way contacts by where the surfaces point at its start.
             refreshOneWayShapes()
             if settings.sequentialImpacts { resolveImpacts(dt: partDt) }
@@ -288,10 +290,44 @@ public final class B3World {
                 active[key] = r
             }
             collectEvents(into: &events)
+            impactHits = []
             collectJointBreaks()
         }
+        appliedForces.removeAll(keepingCapacity: true)
         retiredShapes.removeAll(keepingCapacity: true)
         for h in didSimulate.values { h(.init(deltaTime: fixedDt)) }
+    }
+
+    /// The impacts the sequential pass resolved before the current Box3D step.
+    var impactHits: [SequentialImpacts.Hit] = []
+
+    /// A force for the current fixed step, kept so that it acts on every substep when sequential
+    /// impacts step them one by one.
+    enum AppliedForce {
+        case force(b3BodyId, SIMD3<Float>, at: SIMD3<Float>?)
+        case torque(b3BodyId, SIMD3<Float>)
+        case wind(b3ShapeId, SIMD3<Float>, drag: Float, lift: Float, maxSpeed: Float)
+    }
+    var appliedForces: [AppliedForce] = []
+
+    /// Records a force for `reapplyForces`; only sequential impacts need them.
+    func recordForce(_ f: AppliedForce) {
+        if settings.sequentialImpacts, settings.subStepCount > 1 { appliedForces.append(f) }
+    }
+
+    private func reapplyForces() {
+        for f in appliedForces {
+            switch f {
+            case .force(let body, let force, let point):
+                guard b3Body_IsValid(body) else { continue }
+                if let point { b3Body_ApplyForce(body, b3Vec3(force), b3Vec3(point), true) }
+                else { b3Body_ApplyForceToCenter(body, b3Vec3(force), true) }
+            case .torque(let body, let torque):
+                if b3Body_IsValid(body) { b3Body_ApplyTorque(body, b3Vec3(torque), true) }
+            case .wind(let shape, let wind, let drag, let lift, let maxSpeed):
+                if b3Shape_IsValid(shape) { b3Shape_ApplyWind(shape, b3Vec3(wind), drag, lift, maxSpeed, true) }
+            }
+        }
     }
 
     private var willSimulate: [UUID: (B3PhysicsSimulationEvents.WillSimulate) -> Void] = [:]
@@ -376,11 +412,22 @@ public final class B3World {
                 out.append(B3CollisionEvents.Ended(entityA: a, entityB: b))
             }
         }
+        var hitPairs = Set<SequentialImpacts.Pair>()
         for i in 0..<Int(c.hitCount) {
             let e = c.hitEvents[i]
+            if !impactHits.isEmpty {
+                hitPairs.insert(.init(sphere: e.shapeIdA, other: e.shapeIdB))
+                hitPairs.insert(.init(sphere: e.shapeIdB, other: e.shapeIdA))
+            }
             if let a = entity(for: e.shapeIdA), let b = entity(for: e.shapeIdB) {
                 out.append(B3CollisionEvents.Hit(entityA: a, entityB: b, position: e.point.simd,
                                                  normal: e.normal.simd, approachSpeed: e.approachSpeed))
+            }
+        }
+        // Impacts the sequential pass resolved, which Box3D then saw separating.
+        for h in impactHits where !hitPairs.contains(h.pair) {
+            if let a = entity(for: h.pair.sphere), let b = entity(for: h.pair.other) {
+                out.append(B3CollisionEvents.Hit(entityA: a, entityB: b, position: h.point, normal: h.normal, approachSpeed: h.speed))
             }
         }
         let s = b3World_GetSensorEvents(id)

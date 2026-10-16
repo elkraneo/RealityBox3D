@@ -87,6 +87,8 @@ package final class NewtonsCradleScene {
 
     /// All balls at rest, then the first `count` raised to `degrees` toward -x and released.
     package func lift(_ count: Int, degrees: Float = 30) {
+        // A ball still held would be pulled back to the hand.
+        endDrag()
         for (index, ball) in balls.enumerated() {
             let a = index < count ? -degrees * .pi / 180 : 0
             ball.position = pivot(index) + Settings.stringLength * SIMD3(sin(a), -cos(a), 0)
@@ -131,7 +133,7 @@ package final class NewtonsCradleScene {
         let hinge = simd_quatf(from: [1, 0, 0], to: [0, 0, 1])
         let attachmentPin = attachment.pins.set(named: "attachment_hinge", position: .zero, orientation: hinge)
         let ballPin = ball.pins.set(named: "ball_hinge", position: attachment.position(relativeTo: ball), orientation: hinge)
-        try? B3PhysicsRevoluteJoint(pin0: attachmentPin, pin1: ballPin).addToSimulation()
+        _ = try? B3PhysicsRevoluteJoint(pin0: attachmentPin, pin1: ballPin).addToSimulation()
         return (attachment, ball)
     }
 

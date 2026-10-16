@@ -84,7 +84,10 @@ extension B3BodyProxy {
             return (m * SIMD4(wind, 0)).xyz
         } ?? wind
         guard w.x.isFinite, w.y.isFinite, w.z.isFinite, drag.isFinite, lift.isFinite, maxSpeed.isFinite, maxSpeed >= 0 else { return }
-        for s in record.shapeIds { b3Shape_ApplyWind(s, b3Vec3(w), drag, lift, maxSpeed, true) }
+        for s in record.shapeIds {
+            b3Shape_ApplyWind(s, b3Vec3(w), drag, lift, maxSpeed, true)
+            record.world.recordForce(.wind(s, w, drag: drag, lift: lift, maxSpeed: maxSpeed))
+        }
     }
 }
 

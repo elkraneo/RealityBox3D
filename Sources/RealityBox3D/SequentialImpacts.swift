@@ -8,40 +8,80 @@ import simd
 /// within the step bounces off it at once, then the struck body, with its new velocity, strikes
 /// the next, until nothing approaches: one ball in, one ball out, as in a Newton's cradle.
 ///
-/// Spheres against spheres, capsules and hulls; other contacts are left to Box3D.
+/// Spheres against spheres, capsules and hulls; other contacts are left to Box3D, as are bodies
+/// held by joints, except a pendulum: one revolute or spherical joint to a static body, which the
+/// pass turns about its pivot. One-way shapes and pairs a joint keeps apart are Box3D's too.
 enum SequentialImpacts {
+    /// How a body answers an impulse.
+    enum Response {
+        case free(inverseMass: Float, inverseInertia: simd_float3x3)
+        /// Turning about a fixed pivot: `inverseInertia` maps angular impulse about the pivot to
+        /// angular velocity, limited to the axis of a hinge.
+        case pivoted(pivot: SIMD3<Float>, inverseInertia: simd_float3x3)
+        case immovable
+        /// Held by joints the pass doesn't model: its impacts are Box3D's.
+        case unsupported
+    }
+
     struct Body {
         var linear: SIMD3<Float>, angular: SIMD3<Float>
-        let inverseMass: Float
-        let inverseInertia: simd_float3x3
+        let response: Response
         let center: SIMD3<Float>
         var changed = false
+
+        var movable: Bool {
+            switch response {
+            case .free, .pivoted: true
+            case .immovable, .unsupported: false
+            }
+        }
+
+        /// The change of velocity along `n` at `point` per unit impulse along `n` there.
+        func k(at point: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
+            switch response {
+            case .free(let m, let i):
+                let r = point - center
+                return m + simd_dot(n, simd_cross(i * simd_cross(r, n), r))
+            case .pivoted(let p, let i):
+                let r = point - p
+                return simd_dot(n, simd_cross(i * simd_cross(r, n), r))
+            case .immovable, .unsupported: return 0
+            }
+        }
+
+        mutating func apply(_ impulse: SIMD3<Float>, at point: SIMD3<Float>) {
+            switch response {
+            case .free(let m, let i):
+                linear += impulse * m
+                angular += i * simd_cross(point - center, impulse)
+            case .pivoted(let p, let i):
+                let turn = i * simd_cross(point - p, impulse)
+                angular += turn
+                linear += simd_cross(turn, center - p)
+            case .immovable, .unsupported: return
+            }
+            changed = true
+        }
     }
 
     struct Pair: Hashable { let sphere: b3ShapeId, other: b3ShapeId }
 
-    /// Resolves the impacts the spheres of `spheres` would make within `dt`.
+    /// An impact the pass resolved, for the world's hit events. The normal points from the sphere
+    /// to the other shape.
+    struct Hit { let pair: Pair; let point: SIMD3<Float>, normal: SIMD3<Float>; let speed: Float }
+
+    /// Resolves the impacts the spheres of `spheres` would make within `dt`. Returns those at
+    /// `hitThreshold` or faster between shapes that report hits, the fastest of each pair.
+    @discardableResult
     static func resolve(world: b3WorldId, spheres: [b3ShapeId], dt: Float, threshold: Float,
-                        combine: B3MaterialCombine, slop: Float) {
-        guard !spheres.isEmpty else { return }
+                        combine: B3MaterialCombine, slop: Float, oneWay: OneWayShapes?,
+                        hitThreshold: Float = .infinity) -> [Hit] {
+        guard !spheres.isEmpty else { return [] }
         var bodies: [b3BodyId: Body] = [:]
         func body(_ id: b3BodyId) -> Body {
             if let b = bodies[id] { return b }
-            // A sleeping dynamic body is struck like an awake one; setting its velocity wakes it.
-            let dynamic = b3Body_GetType(id) == b3_dynamicBody && b3Body_IsEnabled(id)
-            let mass = b3Body_GetMass(id)
-            var inverseInertia = simd_float3x3()
-            if dynamic, mass > 0 {
-                let local = b3Body_GetLocalRotationalInertia(id)
-                let m = simd_float3x3(local.cx.simd, local.cy.simd, local.cz.simd)
-                if m.determinant > 1e-12 {
-                    let r = simd_float3x3(b3Body_GetRotation(id).simd)
-                    inverseInertia = r * m.inverse * r.transpose
-                }
-            }
             let b = Body(linear: b3Body_GetLinearVelocity(id).simd, angular: b3Body_GetAngularVelocity(id).simd,
-                         inverseMass: dynamic && mass > 0 ? 1 / mass : 0, inverseInertia: inverseInertia,
-                         center: b3Body_GetWorldCenter(id).simd)
+                         response: response(of: id), center: b3Body_GetWorldCenter(id).simd)
             bodies[id] = b
             return b
         }
@@ -65,7 +105,7 @@ enum SequentialImpacts {
                 Unmanaged<Found>.fromOpaque(context!).takeUnretainedValue().shapes.append(shape)
                 return true
             }, Unmanaged.passUnretained(found).toOpaque())
-            for o in found.shapes where b3Shape_GetBody(o) != b3Shape_GetBody(s) && collides(s, o) {
+            for o in found.shapes where b3Shape_GetBody(o) != b3Shape_GetBody(s) && collides(s, o, oneWay: oneWay) {
                 let type = b3Shape_GetType(o)
                 guard type == b3_sphereShape || type == b3_capsuleShape || type == b3_hullShape else { continue }
                 if type == b3_sphereShape, b3Body_GetType(b3Shape_GetBody(o)) == b3_dynamicBody, queued.insert(o).inserted {
@@ -77,47 +117,43 @@ enum SequentialImpacts {
                 if seen.insert(pair).inserted { pairs.append(pair) }
             }
         }
-        guard !pairs.isEmpty else { return }
+        guard !pairs.isEmpty else { return [] }
 
         // Pair by pair, from the velocities earlier impacts left, until none approaches.
+        var hits: [Pair: Hit] = [:]
         for _ in 0..<max(4 * pairs.count, 16) {
             var struck = false
             for pair in pairs {
                 let sphere = b3Shape_GetSphere(pair.sphere)
                 let idA = b3Shape_GetBody(pair.sphere), idB = b3Shape_GetBody(pair.other)
                 var a = body(idA), b = body(idB)
-                guard a.inverseMass + b.inverseMass > 0 else { continue }
+                if case .unsupported = a.response { continue }
+                if case .unsupported = b.response { continue }
+                guard a.movable || b.movable else { continue }
                 let t = b3Body_GetTransform(idA)
                 let centerA = t.q.simd.act(sphere.center.simd) + t.p.simd
+                guard let n = touch(sphere: centerA, radius: sphere.radius, moving: a.linear + simd_cross(a.angular, centerA - a.center),
+                                    other: pair.other, moving: b.linear, within: dt, slop: slop) else { continue }
+                let point = centerA + n * sphere.radius
                 let onB = b3Shape_GetClosestPoint(pair.other, b3Vec3(centerA)).simd
-                let gap = onB - centerA
-                let distance = simd_length(gap)
-                guard distance > 1e-6 else { continue }
-                let n = gap / distance
-                let separation = distance - sphere.radius
-                let rA = centerA + n * sphere.radius - a.center, rB = onB - b.center
-                let vA = a.linear + simd_cross(a.angular, rA), vB = b.linear + simd_cross(b.angular, rB)
+                let vA = a.linear + simd_cross(a.angular, point - a.center)
+                let vB = b.linear + simd_cross(b.angular, onB - b.center)
                 let vn = simd_dot(vB - vA, n)
-                // Approaching faster than the threshold, and touching within this step.
-                guard vn < -threshold, separation + vn * dt <= slop else { continue }
+                // Approaching faster than the threshold.
+                guard vn < -threshold else { continue }
+                let k = a.k(at: point, n) + b.k(at: onB, n)
+                guard k > 0 else { continue }
                 let e = combine.callback(b3Shape_GetRestitution(pair.sphere), 0, b3Shape_GetRestitution(pair.other), 0)
-                let kA = simd_dot(n, simd_cross(a.inverseInertia * simd_cross(rA, n), rA))
-                let kB = simd_dot(n, simd_cross(b.inverseInertia * simd_cross(rB, n), rB))
-                let j = -(1 + e) * vn / (a.inverseMass + b.inverseMass + kA + kB)
-                let impulse = j * n
-                if a.inverseMass > 0 {
-                    a.linear -= impulse * a.inverseMass
-                    a.angular -= a.inverseInertia * simd_cross(rA, impulse)
-                    a.changed = true
-                }
-                if b.inverseMass > 0 {
-                    b.linear += impulse * b.inverseMass
-                    b.angular += b.inverseInertia * simd_cross(rB, impulse)
-                    b.changed = true
-                }
+                let j = -(1 + e) * vn / k
+                a.apply(-j * n, at: point)
+                b.apply(j * n, at: onB)
                 bodies[idA] = a
                 bodies[idB] = b
                 struck = true
+                if -vn >= hitThreshold, b3Shape_AreHitEventsEnabled(pair.sphere) || b3Shape_AreHitEventsEnabled(pair.other),
+                   hits[pair].map({ -vn > $0.speed }) ?? true {
+                    hits[pair] = Hit(pair: pair, point: point, normal: n, speed: -vn)
+                }
             }
             if !struck { break }
         }
@@ -126,22 +162,98 @@ enum SequentialImpacts {
             b3Body_SetAngularVelocity(id, b3Vec3(b.angular))
             b3Body_SetAwake(id, true)
         }
+        return Array(hits.values)
     }
 
-    /// Box3D's filter rule: group index first, then categories and masks both ways. Sensors never.
-    private static func collides(_ a: b3ShapeId, _ b: b3ShapeId) -> Bool {
+    /// The contact normal, from the sphere towards `other`, if the sphere comes within `slop` of it
+    /// within `dt`, the two moving apart from each other at constant velocities: conservative
+    /// advancement, so a near miss isn't an impact.
+    static func touch(sphere center: SIMD3<Float>, radius: Float, moving va: SIMD3<Float>,
+                      other: b3ShapeId, moving vb: SIMD3<Float>, within dt: Float, slop: Float) -> SIMD3<Float>? {
+        let motion = va - vb, speed = simd_length(motion)
+        var time: Float = 0
+        for _ in 0..<32 {
+            // In the other shape's frame at its present pose.
+            let c = center + motion * time
+            let gap = b3Shape_GetClosestPoint(other, b3Vec3(c)).simd - c
+            let distance = simd_length(gap)
+            guard distance > 1e-6 else { return nil }
+            let separation = distance - radius
+            if separation <= slop { return gap / distance }
+            guard speed > 0 else { return nil }
+            time += separation / speed
+            if time > dt { return nil }
+        }
+        return nil
+    }
+
+    /// How a body answers the pass's impulses.
+    static func response(of id: b3BodyId) -> Response {
+        // A sleeping dynamic body is struck like an awake one; setting its velocity wakes it.
+        let mass = b3Body_GetMass(id)
+        guard b3Body_GetType(id) == b3_dynamicBody, b3Body_IsEnabled(id), mass > 0 else { return .immovable }
+        let w = b3Body_GetWorldInverseRotationalInertia(id)
+        let inverseInertia = simd_float3x3(w.cx.simd, w.cy.simd, w.cz.simd)
+        // The joints that hold the body; filter joints only keep bodies apart.
+        var joints = [b3JointId](repeating: b3JointId(), count: Int(b3Body_GetJointCount(id)))
+        let count = Int(b3Body_GetJoints(id, &joints, Int32(joints.count)))
+        let holding = joints.prefix(count).filter { b3Joint_IsValid($0) && b3Joint_GetType($0) != b3_filterJoint }
+        guard let joint = holding.first else { return .free(inverseMass: 1 / mass, inverseInertia: inverseInertia) }
+        // A pendulum: one revolute or spherical joint to a static body.
+        let type = b3Joint_GetType(joint)
+        let isA = b3Joint_GetBodyA(joint) == id
+        guard holding.count == 1, type == b3_revoluteJoint || type == b3_sphericalJoint,
+              b3Body_GetType(isA ? b3Joint_GetBodyB(joint) : b3Joint_GetBodyA(joint)) == b3_staticBody
+        else { return .unsupported }
+        // A pinned body that can't turn can't move.
+        guard inverseInertia.determinant != 0 else { return .immovable }
+        let frame = isA ? b3Joint_GetLocalFrameA(joint) : b3Joint_GetLocalFrameB(joint)
+        let t = b3Body_GetTransform(id)
+        let pivot = t.q.simd.act(frame.p.simd) + t.p.simd
+        // Inertia about the pivot: about the center of mass, plus the mass at its distance.
+        let d = b3Body_GetWorldCenter(id).simd - pivot
+        let aboutPivot = inverseInertia.inverse
+            + mass * (simd_float3x3(diagonal: SIMD3(repeating: simd_length_squared(d))) - outer(d, d))
+        if type == b3_sphericalJoint { return .pivoted(pivot: pivot, inverseInertia: aboutPivot.inverse) }
+        // A hinge turns only about its axis, its frame's z.
+        let axis = t.q.simd.act(frame.q.simd.act(SIMD3(0, 0, 1)))
+        let along = simd_dot(axis, aboutPivot * axis)
+        guard along > 0 else { return .immovable }
+        return .pivoted(pivot: pivot, inverseInertia: outer(axis, axis) * (1 / along))
+    }
+
+    private static func outer(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> simd_float3x3 {
+        simd_float3x3(columns: (a * b.x, a * b.y, a * b.z))
+    }
+
+    /// Box3D's filter rule: group index first, then categories and masks both ways. Never sensors,
+    /// nor bodies a joint keeps apart, nor one-way shapes, whose rule needs Box3D's contact.
+    private static func collides(_ a: b3ShapeId, _ b: b3ShapeId, oneWay: OneWayShapes?) -> Bool {
         if b3Shape_IsSensor(a) || b3Shape_IsSensor(b) { return false }
+        if let oneWay, oneWay.directions[.init(a)] != nil || oneWay.directions[.init(b)] != nil { return false }
         let fa = b3Shape_GetFilter(a), fb = b3Shape_GetFilter(b)
-        if fa.groupIndex == fb.groupIndex, fa.groupIndex != 0 { return fa.groupIndex > 0 }
-        return (fa.maskBits & fb.categoryBits) != 0 && (fa.categoryBits & fb.maskBits) != 0
+        if fa.groupIndex == fb.groupIndex, fa.groupIndex != 0 {
+            guard fa.groupIndex > 0 else { return false }
+        } else if (fa.maskBits & fb.categoryBits) == 0 || (fa.categoryBits & fb.maskBits) == 0 {
+            return false
+        }
+        let bodyA = b3Shape_GetBody(a), bodyB = b3Shape_GetBody(b)
+        var joints = [b3JointId](repeating: b3JointId(), count: Int(b3Body_GetJointCount(bodyA)))
+        let count = Int(b3Body_GetJoints(bodyA, &joints, Int32(joints.count)))
+        return !joints.prefix(count).contains { j in
+            b3Joint_IsValid(j) && !b3Joint_GetCollideConnected(j) && (b3Joint_GetBodyA(j) == bodyB || b3Joint_GetBodyB(j) == bodyB)
+        }
     }
 }
 
 extension B3World {
+    /// Resolves the coming step's impacts and keeps those that are hits, for `collectEvents`.
     func resolveImpacts(dt: Float) {
-        SequentialImpacts.resolve(world: id, spheres: SequentialImpacts.spheres(of: records.values.filter(\.isEnabled).flatMap(\.shapeIds)),
-                                  dt: dt, threshold: b3World_GetRestitutionThreshold(id),
-                                  combine: settings.restitutionCombine, slop: 0.005 * b3GetLengthUnitsPerMeter())
+        impactHits = SequentialImpacts.resolve(
+            world: id, spheres: SequentialImpacts.spheres(of: records.values.filter(\.isEnabled).flatMap(\.shapeIds)),
+            dt: dt, threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
+            slop: 0.005 * b3GetLengthUnitsPerMeter(), oneWay: oneWayRecords.isEmpty ? nil : oneWayShapes,
+            hitThreshold: b3World_GetHitEventThreshold(id))
     }
 }
 

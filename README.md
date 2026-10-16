@@ -208,7 +208,9 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
 - A broken joint reports its load at the end of the step it broke in, not the peak that broke it.
 - `sequentialImpacts` covers spheres striking spheres, capsules and hulls, and runs Box3D's substeps
   as steps of their own. Impacts slower than the restitution threshold, 1 m/s by default, are left
-  to Box3D: lower it for small, slow balls modeled in meters.
+  to Box3D: lower it for small, slow balls modeled in meters. So are one-way shapes and bodies
+  held by joints, except pendulums (one revolute or spherical joint to a static body), which the
+  pass turns about their pivot.
 - The apps run on macOS. The library builds for iOS and visionOS but has not run on a device.
 
 ## License

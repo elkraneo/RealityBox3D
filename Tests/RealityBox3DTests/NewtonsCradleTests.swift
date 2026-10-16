@@ -8,37 +8,42 @@ import Box3DRealityKitSampleScenes
 @MainActor
 @Suite(.serialized) struct NewtonsCradleTests {
     /// Releases the first `count` balls from 30° and returns each ball's farthest swing toward +x
-    /// from the first impact until the struck balls turn back.
-    func swing(lift count: Int, sequential: Bool = true) -> [Float] {
+    /// and toward -x from the first impact until the struck balls turn back.
+    func swing(lift count: Int, sequential: Bool = true) -> (peak: [Float], trough: [Float]) {
         let scene = NewtonsCradleScene()
         scene.root.components[B3PhysicsSimulationComponent.self]!.sequentialImpacts = sequential
         let world = B3World(root: scene.root, settings: scene.root.components[B3PhysicsSimulationComponent.self]!)
         scene.lift(count)
-        var peak = [Float](repeating: -90, count: 5), impact: Int?
+        var peak = [Float](repeating: -90, count: 5), trough = [Float](repeating: 90, count: 5), impact: Int?
         for frame in 0..<150 {
             world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
             if impact == nil, scene.angle(of: 0) > -2 { impact = frame }
             // Slow motion: a quarter period of the 60 cm pendulum is about 0.4 s.
             guard let impact, frame <= impact + 36 else { continue }
-            for i in 0..<5 { peak[i] = max(peak[i], scene.angle(of: i)) }
+            for i in 0..<5 {
+                peak[i] = max(peak[i], scene.angle(of: i))
+                trough[i] = min(trough[i], scene.angle(of: i))
+            }
         }
-        return peak
+        return (peak, trough)
     }
 
     @Test(arguments: 1...3) func liftedBallsSendTheSameNumberOut(count: Int) {
-        let peak = swing(lift: count)
+        let (peak, trough) = swing(lift: count)
         for i in 0..<5 {
             if i >= 5 - count {
                 #expect(peak[i] > 28, "ball \(i) of \(peak) should swing out")
             } else {
-                #expect(peak[i] < 1.5, "ball \(i) of \(peak) should stay")
+                // A lifted ball swings in from -x; one at rest must stay, either way.
+                let farthest = i < count ? peak[i] : max(peak[i], -trough[i])
+                #expect(farthest < 1.5, "ball \(i) of \(peak), \(trough) should stay")
             }
         }
     }
 
     // Box3D's solver alone shares the momentum: the case the sequential pass exists for.
     @Test func withoutSequentialImpactsTheRowShares() {
-        let peak = swing(lift: 1, sequential: false)
+        let peak = swing(lift: 1, sequential: false).peak
         #expect(peak[1] > 3 || peak[2] > 3 || peak[3] > 3, "\(peak)")
     }
 
@@ -68,10 +73,10 @@ import Box3DRealityKitSampleScenes
             world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
             if scene.angle(of: 0) > -2 { back = true }
             guard back else { continue }
-            for i in 1..<5 { peak[i] = max(peak[i], scene.angle(of: i)) }
+            for i in 1..<5 { peak[i] = max(peak[i], abs(scene.angle(of: i))) }
         }
         #expect(peak[4] > 40, "the last ball should swing out: \(peak)")
-        #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay: \(peak)")
+        #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay, either way: \(peak)")
     }
 
     // A ball dragged to 30° by hand and let go swings into the row like a lifted one.
@@ -99,11 +104,26 @@ import Box3DRealityKitSampleScenes
             world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
             if !struck, scene.angle(of: 0) > -2 { struck = true; _ = frame }
             guard struck else { continue }
-            for i in 1..<5 { peak[i] = max(peak[i], scene.angle(of: i)) }
+            for i in 1..<5 { peak[i] = max(peak[i], i < 4 ? abs(scene.angle(of: i)) : scene.angle(of: i)) }
             if scene.angle(of: 4) < peak[4] - 0.5 { break }
         }
         #expect(peak[4] > 26, "the last ball should swing out: \(peak)")
-        #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay: \(peak)")
+        #expect(peak[1..<4].allSatisfy { $0 < 1.5 }, "the middle should stay, either way: \(peak)")
+    }
+
+    // Reset during a drag lets go: the ball isn't pulled back to the hand.
+    @Test func resetLetsGoOfTheBall() {
+        let scene = NewtonsCradleScene()
+        let world = B3World(root: scene.root, settings: scene.root.components[B3PhysicsSimulationComponent.self]!)
+        world.update(entities: scene.bodies, deltaTime: 1.0 / 60)
+        let ball = scene.balls[0]
+        #expect(scene.grab(ball, at: ball.position(relativeTo: scene.root)))
+        scene.drag(toWorld: ball.position(relativeTo: nil) + [-0.1, 0.05, 0])
+        for _ in 0..<30 { world.update(entities: scene.bodies, deltaTime: 1.0 / 60) }
+        scene.lift(0)
+        for _ in 0..<30 { world.update(entities: scene.bodies, deltaTime: 1.0 / 60) }
+        #expect(abs(scene.angle(of: 0)) < 0.5, "pulled to \(scene.angle(of: 0))°")
+        #expect(scene.root.components[B3PhysicsJointsComponent.self]!.joints.count == 5)
     }
 
     // A free row of five touching balls in zero gravity: the first one's velocity ends in the last.

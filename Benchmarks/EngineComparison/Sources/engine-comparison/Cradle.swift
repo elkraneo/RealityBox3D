@@ -2,6 +2,7 @@
 // RealityBox3D and RealitySDFPhysics, with RealitySDFPhysics's metrics:
 //
 // 1. Lift: the first k balls raised to 30° and released; each ball's farthest swing toward +x
+//    (either way for the balls at rest)
 //    over the first swing out, 0.85 s with Apple's slow motion. A real cradle sends the far k
 //    balls out past 28° and leaves the others under 1.5°.
 // 2. Push: Apple's impulse on the first ball; farthest swings over 2 s. Ball 5 out past 40°,
@@ -82,6 +83,13 @@ struct Box3DCradle {
     }
 }
 
+/// How far a ball has swung for the metrics: toward +x for the balls set moving (the lifted or
+/// pushed ones swing in from -x), either way for those at rest.
+func swing(_ angle: Float, _ ball: Int, _ c: CradleCase) -> Float {
+    let moved: Int = { if case .lift(let k) = c { k } else { 1 } }()
+    return ball < moved ? angle : abs(angle)
+}
+
 /// Farthest swing of each ball toward +x, in degrees.
 @MainActor
 func cradleBox3D(_ c: CradleCase) -> [Float] {
@@ -96,7 +104,7 @@ func cradleBox3D(_ c: CradleCase) -> [Float] {
     var peak = [Float](repeating: -90, count: 5)
     for _ in 0..<c.frames {
         world.update(entities: bodies, deltaTime: 1.0 / 60)
-        for i in 0..<5 { peak[i] = max(peak[i], cradle.angle(i)) }
+        for i in 0..<5 { peak[i] = max(peak[i], swing(cradle.angle(i), i, c)) }
     }
     return peak
 }
@@ -159,7 +167,7 @@ func cradleSDF(_ c: CradleCase) -> [Float] {
         simulation.step(root: root)
         for i in 0..<5 {
             let v = balls[i].position // hinge at the pendulum's origin
-            peak[i] = max(peak[i], atan2(v.x, -v.y) * 180 / .pi)
+            peak[i] = max(peak[i], swing(atan2(v.x, -v.y) * 180 / .pi, i, c))
         }
     }
     return peak
@@ -261,7 +269,7 @@ func cradleRealityKit(_ c: CradleCase) async throws -> [Float] {
     var peak = [Float](repeating: -90, count: 5)
     for _ in 0..<c.frames {
         try await stepper.frame()
-        for i in 0..<5 { peak[i] = max(peak[i], angle(i)) }
+        for i in 0..<5 { peak[i] = max(peak[i], swing(angle(i), i, c)) }
     }
     return peak
 }
