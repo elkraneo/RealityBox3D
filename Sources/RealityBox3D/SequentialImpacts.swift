@@ -230,6 +230,9 @@ enum SequentialImpacts {
         var joints = [b3JointId](repeating: b3JointId(), count: Int(b3Body_GetJointCount(id)))
         let count = Int(b3Body_GetJoints(id, &joints, Int32(joints.count)))
         let holding = joints.prefix(count).filter { b3Joint_IsValid($0) && b3Joint_GetType($0) != b3_filterJoint }
+        // Locked axes take back what the pass would give along them.
+        let locks = b3Body_GetMotionLocks(id)
+        if locks.linearX || locks.linearY || locks.linearZ || locks.angularX || locks.angularY || locks.angularZ { return .unsupported }
         guard let joint = holding.first else { return .free(inverseMass: 1 / mass, inverseInertia: inverseInertia) }
         // A pendulum: one revolute or spherical joint to a static body.
         let type = b3Joint_GetType(joint)
@@ -292,7 +295,7 @@ extension B3World {
     func resolveImpacts(dt: Float) {
         let shapes = records.values.filter(\.isEnabled).flatMap(\.shapeIds)
         impactHits = SequentialImpacts.resolve(
-            world: id, spheres: SequentialImpacts.spheres(of: shapes),
+            world: id, spheres: SequentialImpacts.spheres(of: shapes, world: id, dt: dt, slop: 0.005 * b3GetLengthUnitsPerMeter()),
             dt: dt, threshold: b3World_GetRestitutionThreshold(id), combine: settings.restitutionCombine,
             slop: 0.005 * b3GetLengthUnitsPerMeter(), oneWay: oneWayRecords.isEmpty ? nil : oneWayShapes,
             moverSpeed: SequentialImpacts.moverSpeed(of: shapes), hitThreshold: b3World_GetHitEventThreshold(id))
@@ -300,13 +303,36 @@ extension B3World {
 }
 
 extension SequentialImpacts {
-    /// The sphere shapes among `shapes` whose bodies are dynamic and awake.
-    static func spheres(of shapes: [b3ShapeId]) -> [b3ShapeId] {
-        shapes.filter { s in
-            guard b3Shape_IsValid(s), b3Shape_GetType(s) == b3_sphereShape else { return false }
+    /// The spheres the pass starts from: those among `shapes` on awake dynamic bodies, and the
+    /// dynamic spheres, asleep too, that other moving shapes among them could reach within `dt`.
+    static func spheres(of shapes: [b3ShapeId], world: b3WorldId, dt: Float, slop: Float) -> [b3ShapeId] {
+        var seeds: [b3ShapeId] = [], seen = Set<b3ShapeId>()
+        final class Found { var shapes: [b3ShapeId] = [] }
+        for s in shapes where b3Shape_IsValid(s) {
             let body = b3Shape_GetBody(s)
-            return b3Body_GetType(body) == b3_dynamicBody && b3Body_IsEnabled(body) && b3Body_IsAwake(body)
+            guard b3Body_GetType(body) != b3_staticBody, b3Body_IsEnabled(body), b3Body_IsAwake(body) else { continue }
+            if b3Shape_GetType(s) == b3_sphereShape, b3Body_GetType(body) == b3_dynamicBody {
+                if seen.insert(s).inserted { seeds.append(s) }
+                continue
+            }
+            // A moving kinematic or non-sphere shape: the spheres in its way.
+            let w = simd_length(b3Body_GetAngularVelocity(body).simd)
+            let speed = simd_length(b3Body_GetLinearVelocity(body).simd) + (w > 0 ? w * reach(of: s, from: b3Body_GetWorldCenter(body).simd) : 0)
+            guard speed > 0 else { continue }
+            var box = b3Shape_GetAABB(s)
+            box.lowerBound = b3Vec3(box.lowerBound.simd - (speed * dt + slop))
+            box.upperBound = b3Vec3(box.upperBound.simd + (speed * dt + slop))
+            let found = Found()
+            _ = b3World_OverlapAABB(world, box, b3DefaultQueryFilter(), { shape, context in
+                Unmanaged<Found>.fromOpaque(context!).takeUnretainedValue().shapes.append(shape)
+                return true
+            }, Unmanaged.passUnretained(found).toOpaque())
+            for o in found.shapes where b3Shape_GetType(o) == b3_sphereShape {
+                let b = b3Shape_GetBody(o)
+                if b3Body_GetType(b) == b3_dynamicBody, b3Body_IsEnabled(b), seen.insert(o).inserted { seeds.append(o) }
+            }
         }
+        return seeds
     }
 }
 
@@ -315,9 +341,11 @@ extension SequentialImpacts {
 /// these are applied again before each later one.
 struct PendingForces {
     struct Load { var force = SIMD3<Float>.zero, torque = SIMD3<Float>.zero }
-    struct Wind: Hashable { let shape: b3ShapeId; let wind: SIMD3<Float>; let drag: Float, lift: Float, maxSpeed: Float }
+    struct Wind { let shape: b3ShapeId; let wind: SIMD3<Float>; let drag: Float, lift: Float, maxSpeed: Float }
     var loads: [b3BodyId: Load] = [:]
-    var winds: [Wind: Int] = [:]
+    /// Each shape's latest wind and how often it blew: Box3D's wind is no sum of its parts, and a
+    /// shape keeps one entry however the wind changes before the step.
+    var winds: [b3ShapeId: (wind: Wind, count: Int)] = [:]
 
     var isEmpty: Bool { loads.isEmpty && winds.isEmpty }
 
@@ -326,15 +354,16 @@ struct PendingForces {
         if let point { loads[body, default: .init()].torque += simd_cross(point - b3Body_GetWorldCenter(body).simd, force) }
     }
     mutating func add(torque: SIMD3<Float>, to body: b3BodyId) { loads[body, default: .init()].torque += torque }
-    mutating func add(_ wind: Wind) { winds[wind, default: 0] += 1 }
+    mutating func add(_ wind: Wind) { winds[wind.shape] = (wind, (winds[wind.shape]?.count ?? 0) + 1) }
 
     func apply() {
         for (body, load) in loads where b3Body_IsValid(body) {
             b3Body_ApplyForceToCenter(body, b3Vec3(load.force), true)
             b3Body_ApplyTorque(body, b3Vec3(load.torque), true)
         }
-        for (w, count) in winds where b3Shape_IsValid(w.shape) {
-            for _ in 0..<count { b3Shape_ApplyWind(w.shape, b3Vec3(w.wind), w.drag, w.lift, w.maxSpeed, true) }
+        for (shape, (w, count)) in winds where b3Shape_IsValid(shape) {
+            // Calls repeated while paused would pile up; a step sees at most a few per shape.
+            for _ in 0..<min(count, 8) { b3Shape_ApplyWind(shape, b3Vec3(w.wind), w.drag, w.lift, w.maxSpeed, true) }
         }
     }
 
@@ -342,10 +371,10 @@ struct PendingForces {
     func copied(to world: UInt16) -> PendingForces {
         var copy = PendingForces()
         for (body, load) in loads { var b = body; b.world0 = world; copy.loads[b] = load }
-        for (w, count) in winds {
-            var s = w.shape
+        for (shape, (w, count)) in winds {
+            var s = shape
             s.world0 = world
-            copy.winds[Wind(shape: s, wind: w.wind, drag: w.drag, lift: w.lift, maxSpeed: w.maxSpeed)] = count
+            copy.winds[s] = (Wind(shape: s, wind: w.wind, drag: w.drag, lift: w.lift, maxSpeed: w.maxSpeed), count)
         }
         return copy
     }

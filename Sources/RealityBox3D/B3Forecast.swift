@@ -119,7 +119,7 @@ public final class B3Forecast {
                     // The snapshot holds the forces for the first substep; the rest get them again.
                     if stepCount == 0, part > 0 { pendingForces.apply() }
                     if !oneWaySources.isEmpty { oneWay.refresh(oneWaySources) }
-                    SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes), dt: dt,
+                    SequentialImpacts.resolve(world: worldId, spheres: SequentialImpacts.spheres(of: impacts.shapes, world: worldId, dt: dt, slop: impacts.slop), dt: dt,
                                               threshold: impacts.threshold, combine: impacts.combine, slop: impacts.slop,
                                               oneWay: oneWaySources.isEmpty ? nil : oneWay,
                                               moverSpeed: SequentialImpacts.moverSpeed(of: impacts.shapes))

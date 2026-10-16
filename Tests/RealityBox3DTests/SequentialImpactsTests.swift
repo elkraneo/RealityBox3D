@@ -243,4 +243,39 @@ import CBox3D
         // Elastic, off a paddle that doesn't slow: twice its speed.
         #expect(abs(vb - 40) < 0.1, "velocities \(va), \(vb)")
     }
+
+    // A ball locked along x is struck as Box3D strikes it, not given a speed its lock takes away.
+    @Test func lockedBodiesKeepTheImpact() {
+        let r = root { $0.subStepCount = 1 }
+        let a = body(r, .generateSphere(radius: 0.1), at: [-0.25, 0, 0], velocity: [6, 0, 0])
+        let b = body(r, .generateSphere(radius: 0.1), at: .zero)
+        b.components[B3PhysicsBodyComponent.self]!.isTranslationLocked = (x: true, y: false, z: false)
+        let w = world(r)
+        for _ in 0..<10 { w.update(entities: [a, b], deltaTime: 1.0 / 60) }
+        #expect((a.b3.linearVelocity?.x ?? 0) < -1, "a left at \(a.b3.linearVelocity ?? .zero)")
+    }
+
+    // A paddle driven into a sleeping row wakes it through the pass, as into an awake one.
+    @Test func kinematicsReachSleepingRows() {
+        let r = root { $0.subStepCount = 1 }
+        let paddle = body(r, .generateBox(size: [0.1, 0.4, 0.4]), at: [-0.4, 0, 0], mode: .kinematic)
+        let a = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let b = body(r, .generateSphere(radius: 0.1), at: [0.2, 0, 0])
+        let w = world(r)
+        for _ in 0..<90 { w.update(entities: [paddle, a, b], deltaTime: 1.0 / 60) }
+        #expect(!a.b3.isAwake && !b.b3.isAwake, "the row should sleep first")
+        paddle.components.set(B3PhysicsMotionComponent(linearVelocity: [20, 0, 0]))
+        w.update(entities: [paddle, a, b], deltaTime: 1.0 / 60)
+        #expect(abs((b.b3.linearVelocity?.x ?? 0) - 40) < 0.1, "velocities \(a.b3.linearVelocity ?? .zero), \(b.b3.linearVelocity ?? .zero)")
+    }
+
+    // A wind that changes every call before a step keeps one entry per shape.
+    @Test func changingWindStaysBounded() {
+        let r = root()
+        let ball = body(r, .generateSphere(radius: 0.1), at: .zero)
+        let w = world(r)
+        w.update(entities: [ball], deltaTime: 1.0 / 60)
+        for i in 0..<1000 { ball.b3.applyWind([Float(i), 0, 0]) }
+        #expect(w.pendingForces.winds.count == 1)
+    }
 }
