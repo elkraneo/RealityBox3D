@@ -78,6 +78,7 @@ if let forecast = world.forecast() {
 | `PhysicsFixedJoint`, `PhysicsDistanceJoint`, `PhysicsJointsComponent` | `B3PhysicsFixedJoint`, `B3PhysicsDistanceJoint`, `B3PhysicsJointsComponent` |
 | — | `B3PhysicsWheelJoint`, `B3PhysicsParallelJoint`, `B3PhysicsMotorJoint`, `B3PhysicsFilterJoint` |
 | `CharacterControllerComponent`, `moveCharacter(by:deltaTime:relativeTo:)` | `B3CharacterControllerComponent`, `entity.b3.moveCharacter(…)`, on Box3D's geometric mover |
+| — | `B3CharacterObstacleComponent`: soft obstacles (a push limit), shapes the sweep passes, bodies the character cannot push; `clippedVelocity` in the state |
 | `scene.raycast`, `scene.convexCast` | `world.raycast`, `world.convexCast` |
 | — | `world.overlaps(of:at:margin:)`: which bodies a shape placed here would touch |
 | — | `world.forecast()`: an exact copy of the world to step ahead |
@@ -103,13 +104,15 @@ does; enabled again, a body continues with the state it had.
 
 macOS apps built on the public API, in `Samples/`:
 
-- `Box3DDemos`: 28 scenes of Box3D's sample app rebuilt in the `Box3DDemoScenes` module with
+- `Box3DDemos`: 29 scenes of Box3D's sample app rebuilt in the `Box3DDemoScenes` module with
   upstream's positions, sizes, densities, materials and cameras, grouped by upstream category:
   Benchmark (Large Pyramid, Wide Pyramid, Convex Pile, Falling Boxes), Stacking (Card House,
   Jenga Stack, Dominoes, Arch), Shapes (Inclined Plane, Rolling Resistance), Restitution, Bodies
   (Gyroscopic Torque, Spinning Book, Weeble, Kinematic), Joints (Revolute, Prismatic, Spherical,
   Weld, Bridge, Ball and Chain, Distance Joint, Driving), Ragdoll (upstream's 12-bone humanoid),
-  Continuous (Thin Wall, Bullet vs Stack), Events (Sensor Visit) and Mesh (Grid). Drag a body to pull it.
+  Character (Geometric Mover, on upstream's test level: walk with WASD, jump with space, sprint
+  with shift), Continuous (Thin Wall, Bullet vs Stack), Events (Sensor Visit) and Mesh (Grid).
+  Drag a body to pull it. `Box3DDemos --scene "Geometric Mover"` opens on one scene.
 - `Box3DRealityKitSamples`: Apple's RealityKit physics samples ported to Box3D bodies, keeping Apple's
   structure and values, each listing where it differs:
   - [Simulating physics with collisions in your visionOS app](https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app),
@@ -193,7 +196,9 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
 ## Known gaps
 
 - The character controller ignores `stepLimit`: Box3D's mover has no step-up, so a capsule rolls up
-  steps lower than its radius, slowly.
+  steps lower than its radius, slowly. Upstream's sample climbs stairs with a sprung ray under the
+  capsule instead, which the Geometric Mover scene ports as game code.
+- Height fields have no holes, so the Geometric Mover's wave terrain is solid where upstream's has some.
 - A body has one density, so shapes of one body cannot differ in density.
 - `convexCast` translates the shape without rotating it, as Box3D's shape casts do.
 - Multithreading uses Box3D's internal scheduler, not Dispatch.
@@ -217,4 +222,5 @@ RealityBox3D. On an M1, 400 tori made of capsules take 3.6 ms per step in Box3D 
 ## License
 
 MIT for this package. Box3D is MIT, by Erin Catto (`Sources/CBox3D/LICENSE.box3d`). The dice
-models are Apple's, under `Samples/Box3DRealityKitSampleScenes/Dice/Models/LICENSE.txt`.
+models are Apple's, under `Samples/Box3DRealityKitSampleScenes/Dice/Models/LICENSE.txt`. The
+Geometric Mover's level meshes are upstream's (`box3d/data/meshes`), under Box3D's license.

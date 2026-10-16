@@ -45,7 +45,9 @@ let package = Package(
         .target(
             name: "Box3DDemoScenes",
             dependencies: ["RealityBox3D", "CBox3D"],
-            path: "Samples/Box3DDemoScenes"
+            path: "Samples/Box3DDemoScenes",
+            // Upstream's level meshes for the Geometric Mover, from box3d/data/meshes
+            resources: [.copy("Meshes")]
         ),
         .executableTarget(
             name: "Box3DDemos",

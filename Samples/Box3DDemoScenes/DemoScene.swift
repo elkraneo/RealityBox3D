@@ -18,10 +18,12 @@ public struct DemoScene: Identifiable, Sendable {
     public var isSleepEnabled = true
     /// Buttons the scene offers, upstream's keyboard actions.
     public var actions: [String] = []
+    /// Keys the scene reads through `DemoContext.input`, described for the app's sidebar.
+    public var controls: String?
     let build: @MainActor @Sendable (inout DemoBuilder) -> Void
 
     init(_ category: String, _ name: String, upstream: String, summary: String, camera: OrbitCamera,
-         isSleepEnabled: Bool = true, actions: [String] = [], build: @escaping @MainActor @Sendable (inout DemoBuilder) -> Void) {
+         isSleepEnabled: Bool = true, actions: [String] = [], controls: String? = nil, build: @escaping @MainActor @Sendable (inout DemoBuilder) -> Void) {
         self.category = category
         self.name = name
         self.upstream = upstream
@@ -29,6 +31,7 @@ public struct DemoScene: Identifiable, Sendable {
         self.camera = camera
         self.isSleepEnabled = isSleepEnabled
         self.actions = actions
+        self.controls = controls
         self.build = build
     }
 
@@ -59,7 +62,7 @@ public struct DemoScene: Identifiable, Sendable {
     }
 
     public static var all: [DemoScene] {
-        benchmarks + stacking + shapes + restitution + bodies + joints + vehicles + continuous + events + meshes
+        benchmarks + stacking + shapes + restitution + bodies + joints + vehicles + characters + continuous + events + meshes
     }
 
     public static func named(_ name: String) -> DemoScene? {

@@ -59,6 +59,7 @@ root.addChild(box)
 - ``B3CharacterControllerComponent``
 - ``B3CharacterControllerStateComponent``
 - ``B3CharacterCollision``
+- ``B3CharacterObstacleComponent``
 
 ### Shapes and materials
 

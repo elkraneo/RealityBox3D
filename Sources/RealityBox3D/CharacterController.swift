@@ -34,7 +34,31 @@ public struct B3CharacterControllerStateComponent: Component, Equatable, Sendabl
     /// Root-space velocity of the last move.
     public var velocity: SIMD3<Float>
     public var isOnGround: Bool
+    /// Box3D extension: the requested velocity with its parts into the touched shapes removed
+    /// (`b3ClipVector`), skipping obstacles that do not clip. Unlike `velocity` it never picks up
+    /// the push out of a soft obstacle, so a game loop can carry it to the next move, as upstream's mover.
+    public var clippedVelocity: SIMD3<Float> = .zero
     public init(velocity: SIMD3<Float> = .zero, isOnGround: Bool = false) { self.velocity = velocity; self.isOnGround = isOnGround }
+}
+
+/// Box3D extension, upstream's `MoverShapeUserData`: how character controllers treat an entity's
+/// shapes. Without it a shape is solid, clips velocity and, on a dynamic body, gets pushed.
+public struct B3CharacterObstacleComponent: Component, Equatable, Sendable {
+    /// The most a character is pushed out of these shapes in one move, in meters. A small limit
+    /// makes a soft obstacle the character leans into and slides off over a few frames.
+    public var pushLimit: Float
+    /// Whether these shapes clip the character's `clippedVelocity`.
+    public var clipsVelocity: Bool
+    /// Whether characters push these shapes' dynamic bodies.
+    public var isPushable: Bool
+    /// Whether these shapes stop a character's sweep. With false only the push limit holds the
+    /// character back, so it can step into them, as upstream's friendly capsule.
+    public var stopsSweep: Bool
+
+    public init(pushLimit: Float = .greatestFiniteMagnitude, clipsVelocity: Bool = true, isPushable: Bool = true,
+                stopsSweep: Bool = true) {
+        self.pushLimit = pushLimit; self.clipsVelocity = clipsVelocity; self.isPushable = isPushable; self.stopsSweep = stopsSweep
+    }
 }
 
 /// Mirrors `CharacterControllerComponent.Collision`.
@@ -66,7 +90,9 @@ extension B3BodyProxy {
         let result = world.moveCapsule(from: start, by: delta, controller: controller, deltaTime: deltaTime)
         entity.setPosition(result.position, relativeTo: root)
         let velocity = deltaTime > 0 ? (result.position - start) / deltaTime : .zero
-        entity.components.set(B3CharacterControllerStateComponent(velocity: velocity, isOnGround: result.isOnGround))
+        var state = B3CharacterControllerStateComponent(velocity: velocity, isOnGround: result.isOnGround)
+        state.clippedVelocity = result.clippedVelocity
+        entity.components.set(state)
 
         guard let collisionHandler else { return }
         let moved = result.position - start
@@ -83,6 +109,7 @@ extension B3World {
     struct MoveResult {
         var position: SIMD3<Float>
         var isOnGround: Bool
+        var clippedVelocity: SIMD3<Float>
         var hits: [(entity: Entity, point: SIMD3<Float>, normal: SIMD3<Float>)]
     }
 
@@ -101,8 +128,10 @@ extension B3World {
             var shapes: [b3ShapeId] = []
             var points: [SIMD3<Float>] = []
             var origin: SIMD3<Float> = .zero
+            unowned let world: B3World
+            init(world: B3World) { self.world = world }
         }
-        let gathered = Planes()
+        let gathered = Planes(world: self)
         let context = Unmanaged.passUnretained(gathered).toOpaque()
         var position = start
         let target = start + delta
@@ -121,11 +150,21 @@ extension B3World {
                 }
                 return true
             }, context)
+            // Each obstacle's own push limit and clipping, upstream's per-shape user data
+            for i in gathered.planes.indices {
+                guard let rules = obstacle(of: gathered.shapes[i]) else { continue }
+                gathered.planes[i].pushLimit = rules.pushLimit
+                gathered.planes[i].clipVelocity = rules.clipsVelocity
+            }
             let solved = gathered.planes.withUnsafeMutableBufferPointer { buffer in
                 b3SolvePlanes(b3Vec3(target - position), buffer.baseAddress, Int32(buffer.count))
             }
             var step = solved.delta.simd
-            let fraction = b3World_CastMover(id, b3Vec3(position), &capsule, b3Vec3(step), filter, nil, nil)
+            // The cast runs on this thread, inside this call
+            let fraction = b3World_CastMover(id, b3Vec3(position), &capsule, b3Vec3(step), filter, { shape, ctx in
+                let g = Unmanaged<Planes>.fromOpaque(ctx!).takeUnretainedValue()
+                return MainActor.assumeIsolated { g.world.obstacle(of: shape)?.stopsSweep ?? true }
+            }, context)
             step *= fraction
             position += step
             if simd_length_squared(step) < 1e-4 * c.radius * c.radius { break }
@@ -142,7 +181,7 @@ extension B3World {
             let shape = gathered.shapes[i]
             if let e = entity(for: shape) { hits.append((e, point, normal)) }
             // Upstream's push: an impulse that stops the body moving into the character.
-            guard c.pushesBodies, b3Shape_IsValid(shape) else { continue }
+            guard c.pushesBodies, b3Shape_IsValid(shape), obstacle(of: shape)?.isPushable ?? true else { continue }
             let body = b3Shape_GetBody(shape)
             guard b3Body_GetType(body) == b3_dynamicBody else { continue }
             let n = -normal
@@ -157,6 +196,11 @@ extension B3World {
             let impulse = max(-(simd_dot(vB - velocity, n)) / k, 0)
             if impulse > 0 { b3Body_ApplyLinearImpulse(body, b3Vec3(impulse * n), b3Vec3(point), true) }
         }
-        return MoveResult(position: position, isOnGround: onGround, hits: hits)
+        let clipped = gathered.planes.withUnsafeBufferPointer { b3ClipVector(b3Vec3(velocity), $0.baseAddress, Int32($0.count)) }
+        return MoveResult(position: position, isOnGround: onGround, clippedVelocity: clipped.simd, hits: hits)
+    }
+
+    func obstacle(of shape: b3ShapeId) -> B3CharacterObstacleComponent? {
+        entity(for: shape)?.components[B3CharacterObstacleComponent.self]
     }
 }

@@ -17,7 +17,13 @@ struct ContentView: View {
                     .padding(12)
             }
         }
-        .task { model.load(DemoScene.all[0].id) }
+        .task {
+            model.installKeyMonitor()
+            // `Box3DDemos --scene "Geometric Mover"` opens on that scene
+            let args = CommandLine.arguments
+            let named = args.firstIndex(of: "--scene").flatMap { $0 + 1 < args.count ? DemoScene.named(args[$0 + 1]) : nil }
+            model.load((named ?? DemoScene.all[0]).id)
+        }
     }
 }
 
@@ -55,6 +61,10 @@ private struct Sidebar: View {
                             Button(action) { model.perform(action) }
                         }
                     }
+                }
+                if let controls = model.scene.controls {
+                    Label(controls, systemImage: "keyboard")
+                        .font(.callout)
                 }
             }
 
@@ -120,6 +130,7 @@ private struct Viewport: View {
                     content.add(DemoStage.makeLights())
                     content.add(model.cameraEntity)
                     model.placeCamera()
+                    model.frameSubscription = content.subscribe(to: SceneEvents.Update.self) { _ in model.followCamera() }
                 }
                 Color.clear
                     .contentShape(.rect)

@@ -99,6 +99,11 @@ public struct DemoBuilder {
         scriptObject().onFrame.append(body)
     }
 
+    /// Makes the app's camera follow an entity.
+    public mutating func follow(_ entity: Entity) {
+        scriptObject().follow = entity
+    }
+
     /// A button of the scene, as upstream's keyboard actions.
     public mutating func action(_ name: String, _ body: @escaping @MainActor (DemoContext) -> Void) {
         scriptObject().actions[name] = body

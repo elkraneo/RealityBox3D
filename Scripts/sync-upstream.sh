@@ -22,6 +22,9 @@ for f in benchmarks human utils; do
     cp "$work/box3d/shared/$f.c" "$root/Sources/CBox3DShared/$f.c"
     cp "$work/box3d/shared/$f.h" "$root/Sources/CBox3DShared/include/$f.h"
 done
+for f in test_map01 stairs; do
+    cp "$work/box3d/data/meshes/$f.obj" "$root/Samples/Box3DDemoScenes/Meshes/$f.obj"
+done
 rm -rf "$root/Sources/CBox3DShared/m2air_neon-reference"
 cp -R "$work/box3d/benchmark/m2air_neon" "$root/Sources/CBox3DShared/m2air_neon-reference"
 

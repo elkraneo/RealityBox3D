@@ -311,6 +311,7 @@ public enum RealityBox3D {
         B3PhysicsJointsComponent.registerComponent()
         B3CharacterControllerComponent.registerComponent()
         B3CharacterControllerStateComponent.registerComponent()
+        B3CharacterObstacleComponent.registerComponent()
         B3PhysicsSystem.registerSystem()
     }
 

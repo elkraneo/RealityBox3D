@@ -11,6 +11,8 @@ Commit: `0cfc475b88d0e46bea9533a460afdd79a9001868`
   used only by `b3-bench` as the raw C baseline, and `m2air_neon-reference`, upstream's reference
   timings from `benchmark/m2air_neon`.
 - `Sources/CBox3D/LICENSE.box3d`: upstream's license.
+- `Samples/Box3DDemoScenes/Meshes`: upstream's `data/meshes/test_map01.obj` and `stairs.obj`, the
+  Geometric Mover's level.
 
 Do not edit vendored files. Behavior belongs in the Swift layer, `Sources/RealityBox3D`.
 To update, run `Scripts/sync-upstream.sh [commit]`.

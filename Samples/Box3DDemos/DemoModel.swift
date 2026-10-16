@@ -1,3 +1,4 @@
+import AppKit
 import Box3DDemoScenes
 import Foundation
 import Observation
@@ -59,6 +60,47 @@ final class DemoModel {
         camera.place(cameraEntity)
     }
 
+    // MARK: Keys, for scenes with controls
+
+    @ObservationIgnored private var keys: Set<UInt16> = []
+    @ObservationIgnored private var shift = false
+    @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored var frameSubscription: EventSubscription?
+
+    /// Upstream's WASD, space and shift, read only while the scene has controls.
+    func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            guard let self, self.scene.controls != nil else { return event }
+            if event.type == .flagsChanged {
+                self.shift = event.modifierFlags.contains(.shift)
+                self.pushInput()
+                return event
+            }
+            // W, A, S, D and space; other keys keep the window's shortcuts
+            guard [13, 0, 1, 2, 49].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .control, .option]) else { return event }
+            if event.type == .keyDown { self.keys.insert(event.keyCode) } else { self.keys.remove(event.keyCode) }
+            self.pushInput()
+            return nil
+        }
+    }
+
+    private func pushInput() {
+        func held(_ code: UInt16) -> Float { keys.contains(code) ? 1 : 0 }
+        var input = DemoInput()
+        input.throttle = [held(13) - held(1), held(2) - held(0)]
+        input.jump = keys.contains(49)
+        input.sprint = shift
+        DemoScene.setInput(input, cameraForward: camera.target - camera.eye, root: root)
+    }
+
+    /// Every frame: keeps the camera on the entity the scene follows.
+    func followCamera() {
+        guard let target = DemoScene.followTarget(root: root) else { return }
+        camera.target = target
+        camera.place(cameraEntity)
+    }
+
     /// Rebuilds the scene. The old bodies leave the query, so their Box3D bodies are destroyed
     /// on the next frame and the new ones start from the scene's initial state.
     func reset() {
@@ -71,6 +113,8 @@ final class DemoModel {
         s.subStepCount = keep.subStepCount
         s.isPaused = keep.isPaused
         settings = s
+        keys = []
+        pushInput()
     }
 
     func step() {
@@ -92,6 +136,7 @@ final class DemoModel {
         camera.yaw -= Float(delta.width) * 0.006
         camera.pitch = min(max(camera.pitch + Float(delta.height) * 0.006, -1.4), 1.5)
         camera.place(cameraEntity)
+        pushInput()
     }
 
     func zoom(by factor: Float) {
