@@ -32,6 +32,8 @@ final class BodyRecord {
     var current: b3Transform
     /// Fixed step in which Box3D last reported this body as moved.
     var lastMovedStep = -1
+    /// In the world's set of bodies to write out.
+    var isActive = false
     /// Frame in which the world last found this entity in its input.
     var seenFrame = -1
     /// Depth below the simulation root, and whether a body sits above this one.
@@ -74,10 +76,12 @@ final class BodyRecord {
         def.isBullet = body.effectiveBullet
         def.allowFastRotation = body.allowsFastRotation
         def.motionLocks = body.motionLocks
-        def.userData = key
         bodyId = b3CreateBody(world.id, &def)
         current = b3Body_GetTransform(bodyId)
         previous = current
+        // The body points at its record, so move events need no lookup. The record destroys the
+        // body before it goes.
+        b3Body_SetUserData(bodyId, Unmanaged.passUnretained(self).toOpaque())
 
         createShapes()
         world.oneWayShapesChanged(self, removing: [])
@@ -593,13 +597,22 @@ final class BodyRecord {
 
         let p = simd_mix(previous.p.simd, current.p.simd, SIMD3(repeating: alpha))
         let q = alpha >= 1 ? current.q.simd : simd_slerp(previous.q.simd, current.q.simd, alpha)
-        lastPose = frame.write(position: p, orientation: q, scale: lastPose.scale, to: entity, root: root)
+        // Setting a transform costs RealityKit far more than this check: skip a pose that did not
+        // change. Not under another body, whose move shifts this one's root-space pose on screen.
+        if isNested || !lastPose.isSame(position: p, orientation: q) {
+            lastPose = frame.write(position: p, orientation: q, scale: lastPose.scale, to: entity, root: root)
+        }
 
         // Velocities only for entities that carry a motion component; syncInbound tracks that.
-        if lastMotion != nil, let m = currentMotion() {
-            entity.components.set(m)
-            lastMotion = m
-        }
+        if lastMotion != nil { writeMotion() }
+    }
+
+    /// Out of line: inlined, its component write gives `syncOutbound` a stack frame large enough
+    /// to need probing on every call.
+    @inline(never) private func writeMotion() {
+        guard let m = currentMotion() else { return }
+        entity.components.set(m)
+        lastMotion = m
     }
 
     // MARK: Forces

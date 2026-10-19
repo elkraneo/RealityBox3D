@@ -102,7 +102,7 @@ private struct StatsOverlay: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(model.scene.category) · \(model.scene.name)").font(.headline.monospaced())
                 Text("\(s.bodies) bodies · \(s.awakeBodies) awake · \(s.steps) steps this frame")
-                Text("Box3D \(s.stepMilliseconds, format: .number.precision(.fractionLength(2))) ms · sync in \(s.syncInMilliseconds, format: .number.precision(.fractionLength(2))) ms · out \(s.syncOutMilliseconds, format: .number.precision(.fractionLength(2))) ms")
+                Text("Box3D \(s.box3DMilliseconds, format: .number.precision(.fractionLength(2))) ms · sync in \(s.syncInMilliseconds, format: .number.precision(.fractionLength(2))) ms · out \(s.syncOutMilliseconds, format: .number.precision(.fractionLength(2))) ms")
             }
             .font(.caption.monospaced())
             .padding(8)

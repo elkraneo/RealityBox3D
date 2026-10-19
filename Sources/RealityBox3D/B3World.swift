@@ -6,6 +6,8 @@ import Foundation
 import Combine
 
 let log = Logger(subsystem: "RealityBox3D", category: "world")
+/// Intervals for Instruments' Points of Interest: sync in, fixed steps, Box3D's own step, sync out.
+let signposter = OSSignposter(subsystem: "RealityBox3D", category: .pointsOfInterest)
 
 /// One Box3D world, bound to a simulation root entity or to the scene itself.
 ///
@@ -169,17 +171,21 @@ public final class B3World {
         record.destroy()
         records[key] = nil
         kinematic[key] = nil
-        active[key] = nil
+        active.removeValue(forKey: key)?.isActive = false
     }
 
     private func finishFrame(deltaTime: Double, inboundStart t0: ContinuousClock.Instant) {
+        let syncIn = signposter.beginInterval("sync in")
         readAnchors()
         syncJoints()
+        signposter.endInterval("sync in", syncIn)
         let root = self.root
         let fixedDt = 1.0 / settings.fixedRate
 
         // Fixed steps.
         let t1 = ContinuousClock.now
+        let stepping = signposter.beginInterval("steps")
+        box3DTime = .zero
         if !settings.isPaused { accumulator += deltaTime }
         var steps = 0
         var events: [any B3CollisionEvent] = []
@@ -189,7 +195,10 @@ public final class B3World {
             steps += 1
         }
         if steps == settings.maxStepsPerFrame { accumulator = min(accumulator, fixedDt) }
+        signposter.endInterval("steps", stepping)
         let t2 = ContinuousClock.now
+        let syncOut = signposter.beginInterval("sync out")
+        defer { signposter.endInterval("sync out", syncOut) }
 
         // Outbound sync, only for bodies Box3D reported as moving.
         let alpha = settings.interpolatesPoses ? Float(accumulator / fixedDt) : 1
@@ -207,6 +216,7 @@ public final class B3World {
                                   stepMilliseconds: (t2 - t1).milliseconds,
                                   syncOutMilliseconds: (t3 - t2).milliseconds)
         statistics.entitiesRead = entitiesRead
+        statistics.box3DMilliseconds = box3DTime.milliseconds
     }
 
     private func writeActive(alpha: Float, root: Entity?) {
@@ -244,7 +254,7 @@ public final class B3World {
                 if r.lastMovedStep < stepIndex { settled.append(key) }
             }
         }
-        for key in settled { active[key] = nil }
+        for key in settled { active.removeValue(forKey: key)?.isActive = false }
     }
 
     private func hasWrittenAncestor(_ entity: Entity, _ written: Set<Entity.ID>, root: Entity?) -> Bool {
@@ -283,17 +293,22 @@ public final class B3World {
             // Each step judges one-way contacts by where the surfaces point at its start.
             refreshOneWayShapes()
             if settings.sequentialImpacts { resolveImpacts(dt: partDt) }
+            let b0 = ContinuousClock.now, interval = signposter.beginInterval("box3d")
             b3World_Step(id, partDt, Int32(parts == 1 ? settings.subStepCount : 1))
+            signposter.endInterval("box3d", interval)
+            box3DTime += ContinuousClock.now - b0
             let moves = b3World_GetBodyEvents(id)
             for i in 0..<Int(moves.moveCount) {
                 let e = moves.moveEvents[i]
+                // Joint anchors' bodies carry no record.
                 guard let raw = e.userData else { continue }
-                let key = Entity.ID(UInt(bitPattern: raw))
-                guard let r = records[key], r.body.mode == .dynamic || r.isVelocityDriven else { continue }
+                let r = Unmanaged<BodyRecord>.fromOpaque(raw).takeUnretainedValue()
+                guard r.body.mode == .dynamic || r.isVelocityDriven else { continue }
                 r.moved(to: e.transform, step: stepIndex)
-                active[key] = r
+                if !r.isActive { r.isActive = true; active[r.entity.id] = r }
             }
-            collectEvents(into: &events)
+            // Nobody listens: leave Box3D's events unread rather than build ones nobody gets.
+            if !subscriptions.isEmpty { collectEvents(into: &events) }
             impactHits = []
             collectJointBreaks()
         }
@@ -301,6 +316,9 @@ public final class B3World {
         retiredShapes.removeAll(keepingCapacity: true)
         for h in didSimulate.values { h(.init(deltaTime: fixedDt)) }
     }
+
+    /// Time inside `b3World_Step` this frame.
+    private var box3DTime: Duration = .zero
 
     /// The impacts the sequential pass resolved before the current Box3D step.
     var impactHits: [SequentialImpacts.Hit] = []
@@ -345,7 +363,7 @@ public final class B3World {
     func bodyModeChanged(_ r: BodyRecord) {
         let key = r.entity.id
         kinematic[key] = r.body.mode == .kinematic ? r : nil
-        if r.body.mode != .dynamic { active[key] = nil }
+        if r.body.mode != .dynamic { active.removeValue(forKey: key)?.isActive = false }
     }
 
     private func apply(settings s: B3PhysicsSimulationComponent) {
@@ -487,8 +505,11 @@ public struct B3Statistics: Sendable {
     public var steps = 0
     /// Reading entities into Box3D.
     public var syncInMilliseconds = 0.0
-    /// Box3D's own stepping, all fixed steps of the frame.
+    /// All fixed steps of the frame: Box3D's stepping and the bridge's work around it (move
+    /// events, collision events, joint breaks, step handlers).
     public var stepMilliseconds = 0.0
+    /// The part of `stepMilliseconds` spent inside Box3D's `b3World_Step`.
+    public var box3DMilliseconds = 0.0
     /// Writing poses, velocities and events back.
     public var syncOutMilliseconds = 0.0
     /// Entities read in this frame: all of them with a full scan, only changed ones from the system.
@@ -555,6 +576,11 @@ struct Pose {
 
     func isClose(to o: Pose) -> Bool {
         simd_distance_squared(position, o.position) < 1e-8 && abs(simd_dot(orientation.vector, o.orientation.vector)) > 1 - 1e-6
+    }
+
+    /// Exactly this pose: anything less breaks forecasts, whose poses match the entities' bit for bit.
+    func isSame(position p: SIMD3<Float>, orientation q: simd_quatf) -> Bool {
+        position == p && orientation.vector == q.vector
     }
 }
 

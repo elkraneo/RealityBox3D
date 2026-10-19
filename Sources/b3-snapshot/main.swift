@@ -44,7 +44,7 @@ do {
         for _ in 0..<frames {
             runner.advance()
             let s = runner.world.statistics
-            box3d += s.stepMilliseconds
+            box3d += s.box3DMilliseconds
             sync += s.syncInMilliseconds + s.syncOutMilliseconds
         }
 
