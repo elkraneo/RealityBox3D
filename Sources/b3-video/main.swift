@@ -3,7 +3,8 @@
 //
 //   swift run -c release b3-video <output.mp4> [demos | mover | dice | cradle]
 //
-// Every frame is one 60 Hz step, so the videos play in real time. `demos` is a reel of Box3D's
+// Every frame is one 60 Hz step, run by RealityKit's systems as in the apps, so the videos play in
+// real time and scene actions work. `demos` is a reel of Box3D's
 // sample scenes; `mover` walks the Geometric Mover's character over upstream's test level on a
 // scripted route; `dice` throws Apple's dice with the forecast in the HUD; `cradle` runs Apple's
 // Newton's cradle with Box3D's solver alone, then with `sequentialImpacts`.
@@ -62,8 +63,7 @@ final class Recorder {
         cameraOutput = try RealityRenderer.CameraOutput(.singleProjection(colorTexture: texture))
     }
 
-    /// Updates the renderer's scene by a time, which runs the RealityKit systems, and renders it.
-    /// Demo scenes pass no time: their DemoRunner steps them.
+    /// Updates the renderer's scene by a time, which runs the RealityKit systems, and renders it
     func render(_ renderer: RealityRenderer, deltaTime: TimeInterval = 0) async throws {
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
             do {
@@ -102,115 +102,147 @@ final class Recorder {
 
 // MARK: Reels
 
-/// A renderer for a demo scene: the demos app's lights and background, and its camera
+/// A demo scene loaded as the demos app loads it, under a root that RealityKit's systems step:
+/// `B3PhysicsSystem` runs the physics and `DemoScriptSystem` the scene's scripts and actions
 @MainActor
-func makeDemoRenderer(_ runner: DemoRunner, camera orbit: OrbitCamera) throws -> (RealityRenderer, PerspectiveCamera, Entity) {
-    let renderer = try RealityRenderer()
+struct DemoStageRender {
+    let root = Entity()
+    let renderer: RealityRenderer
     let camera = DemoStage.makeCamera()
-    orbit.place(camera)
     let lights = DemoStage.makeLights()
-    DemoStage.fitShadows(lights, to: orbit)
-    renderer.entities.append(contentsOf: [runner.root, lights, camera])
-    renderer.activeCamera = camera
-    renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1))
-    return (renderer, camera, lights)
+
+    init(_ scene: DemoScene, camera orbit: OrbitCamera) throws {
+        var settings = B3PhysicsSimulationComponent()
+        settings.workerCount = 4
+        root.components.set(settings)
+        scene.load(into: root)
+        renderer = try RealityRenderer()
+        orbit.place(camera)
+        DemoStage.fitShadows(lights, to: orbit)
+        renderer.entities.append(contentsOf: [root, lights, camera])
+        renderer.activeCamera = camera
+        renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1))
+    }
+
+    var statistics: B3Statistics { RealityBox3D.world(for: root)?.statistics ?? .init() }
 }
 
 /// Box3D's sample scenes, each with a slowly orbiting camera
 @MainActor
 func renderDemos(_ recorder: Recorder) async throws {
-    // Scenes that move on their own, with their length in seconds and a zoom on upstream's camera
-    let reel: [(name: String, seconds: Double, zoom: Float)] = [
-        ("Convex Pile", 5, 2.2),
-        ("Ball and Chain", 4, 1),
-        ("Ragdoll", 3.5, 0.5),
-        ("Conveyor Belt", 4.5, 0.55),
-        ("Wind", 4, 1),
-        ("Spinning Book", 4, 1),
+    // Scenes with their length in seconds, a zoom on upstream's camera, and an action with the
+    // frame it runs on
+    let reel: [(name: String, seconds: Double, zoom: Float, action: (name: String, frame: Int)?)] = [
+        ("Dominoes", 7, 0.5, nil),
+        ("Bullet vs Stack", 4, 0.55, ("Launch", 40)),
+        ("Convex Pile", 5, 2.6, nil),
+        ("Ball and Chain", 3.5, 1, nil),
+        ("Conveyor Belt", 4, 0.55, nil),
+        ("Wind", 3.5, 0.7, nil),
     ]
     for item in reel {
         guard let scene = DemoScene.named(item.name) else { print("unknown scene \(item.name)"); continue }
-        let runner = DemoRunner(scene) { $0.interpolatesPoses = false }
         var orbit = scene.camera
         orbit.distance *= item.zoom
-        let (renderer, camera, _) = try makeDemoRenderer(runner, camera: orbit)
+        let stage = try DemoStageRender(scene, camera: orbit)
         var milliseconds: [Double] = []
-        for _ in 0..<Int(item.seconds * Double(framesPerSecond)) {
-            runner.advance()
-            milliseconds = Array((milliseconds + [runner.world.statistics.stepMilliseconds]).suffix(30))
+        for frame in 0..<Int(item.seconds * Double(framesPerSecond)) {
+            if let action = item.action, action.frame == frame { DemoScene.perform(action.name, root: stage.root) }
             orbit.yaw += 0.002
-            orbit.place(camera)
-            try await recorder.render(renderer)
-            let stats = runner.world.statistics
+            orbit.place(stage.camera)
+            try await recorder.render(stage.renderer, deltaTime: 1.0 / 60)
+            let stats = stage.statistics
+            milliseconds = Array((milliseconds + [stats.stepMilliseconds]).suffix(30))
             let mean = milliseconds.reduce(0, +) / Double(milliseconds.count)
             try await recorder.append(lines: [
                 "RealityBox3D · Box3D rigid bodies in RealityKit",
-                "\(scene.category.lowercased()) · \(scene.name.lowercased())",
-                "\(stats.bodies) bodies · \(stats.awakeBodies) awake · \(String(format: "%.2f", mean)) ms/step",
+                "\(scene.category.lowercased()) · \(scene.name.lowercased())" + (item.action.map { frame >= $0.frame ? " · \($0.name.lowercased())" : "" } ?? ""),
+                "\(stats.bodies) bodies · \(stats.awakeBodies) awake · \(String(format: "%.2f", mean)) ms/step, 4 workers",
             ])
         }
-        print("\(scene.name): \(item.seconds) s")
+        print("\(scene.name): \(item.seconds) s, \(stage.statistics.bodies) bodies")
     }
 }
 
-/// The Geometric Mover's character walks a route of waypoints: past the soft and the hard capsule,
-/// past the door, around and up the stairs, and off their top
+/// The Geometric Mover's character walks a route: into the hard violet capsule, which stops it,
+/// into the soft green one, which it leans into, past the door, and up the stairs and off their top
 @MainActor
 func renderMover(_ recorder: Recorder) async throws {
     guard let scene = DemoScene.named("Geometric Mover") else { return }
-    let runner = DemoRunner(scene) { $0.interpolatesPoses = false }
-    guard let character = runner.root.findEntity(named: "character") else { return }
-    // Waypoints in the level's xz plane, with whether to sprint and jump on the way
-    let route: [(point: SIMD2<Float>, sprint: Bool, jump: Bool, label: String)] = [
-        ([1.2, 5.5], false, false, "past the soft green capsule"),
-        ([-1, 3], false, false, "and around the hard violet one"),
-        ([-6, 3], true, false, "sprinting past the door"),
-        ([-13, 2.5], true, false, "sprinting past the door"),
-        ([-13.5, 0], false, false, "to the foot of the stairs"),
-        ([-9.3, 0], false, false, "up the stairs: a sprung ray floats the capsule"),
-        ([-5, 0], false, true, "and a jump off the top"),
-        ([-1, -2], false, false, "and a jump off the top"),
+    let stage = try DemoStageRender(scene, camera: scene.camera)
+    guard let character = stage.root.findEntity(named: "character") else { return }
+    // Waypoints in the level's xz plane. A waypoint with `hold` frames is walked towards for that
+    // long whether or not it is reached, to lean into an obstacle.
+    // The capsules are filmed from a fixed camera at their side; the rest from behind the character.
+    let side = OrbitCamera(yaw: 90, pitch: 18, distance: 7, target: [0, 1, 5.3])
+    let route: [(point: SIMD2<Float>, jump: Bool, hold: Int?, fixed: Bool, label: String)] = [
+        ([2.5, 9], false, nil, false, "walking to the violet capsule"),
+        ([0.3, 9], false, nil, true, "walking to the violet capsule"),
+        ([0, 5.5], false, 80, true, "into the violet capsule: a hard obstacle, it stops the character"),
+        ([1.4, 7], false, nil, true, "around to the green one"),
+        ([1.4, 2.6], false, nil, true, "around to the green one"),
+        ([0, 2.6], false, nil, true, "around to the green one"),
+        ([0, 5], false, 70, true, "into the green capsule: a soft obstacle, the character leans in"),
+        ([-1.5, 3], false, nil, false, "past the door"),
+        ([-6, 3], false, nil, false, "past the door"),
+        ([-13, 2.5], false, nil, false, "to the foot of the stairs"),
+        ([-13.5, 0], false, nil, false, "to the foot of the stairs"),
+        ([-9.3, 0], false, nil, false, "up the stairs: a sprung ray floats the capsule"),
+        ([-5, 0], true, nil, false, "and a jump off the top"),
+        ([-1, -2], false, nil, false, "and a jump off the top"),
     ]
     var orbit = OrbitCamera(yaw: 120, pitch: 22, distance: 6, target: character.position)
-    let (renderer, camera, lights) = try makeDemoRenderer(runner, camera: orbit)
-    DemoStage.fitShadows(lights, to: orbit)
-    var waypoint = 0, label = route[0].label, frames = 0, idle = 0
+    DemoStage.fitShadows(stage.lights, to: orbit)
+    var fixed = true
+    var waypoint = 0, held = 0, label = route[0].label, frames = 0, idle = 0
     var heading = SIMD2<Float>(-1, -0.6), view = heading
-    while frames < 30 * Int(framesPerSecond) {
+    while frames < 40 * Int(framesPerSecond) {
         let p = character.position
         var input = DemoInput()
         if waypoint < route.count {
             let target = route[waypoint]
             let offset = target.point - SIMD2(p.x, p.z)
-            if simd_length(offset) < 0.8 {
+            let done = target.hold.map { held >= $0 } ?? (simd_length(offset) < 0.8)
+            if done {
                 waypoint += 1
+                held = 0
                 if waypoint < route.count { label = route[waypoint].label }
                 continue
             }
-            heading = simd_normalize(offset)
-            input.throttle = [1, 0]
-            input.sprint = target.sprint
+            held += 1
+            fixed = target.fixed
+            if simd_length(offset) > 0.05 { heading = simd_normalize(offset) }
+            // Leaning into an obstacle stops at its center
+            input.throttle = target.hold != nil && simd_length(offset) < 0.15 ? .zero : [1, 0]
             input.jump = target.jump && simd_length(offset) < 3
         } else {
             idle += 1
             if idle > 75 { break }
         }
-        DemoScene.setInput(input, cameraForward: [heading.x, 0, heading.y], root: runner.root)
-        runner.advance()
+        DemoScene.setInput(input, cameraForward: [heading.x, 0, heading.y], root: stage.root)
+
+        if fixed {
+            side.place(stage.camera)
+            // The chase camera starts from where the side camera is
+            orbit = side
+            view = SIMD2(-sin(side.yaw), -cos(side.yaw))
+        } else {
+            // A third-person camera behind the walking direction, easing after it
+            view = simd_normalize(simd_mix(view, heading, SIMD2(repeating: 0.04)))
+            let yaw = atan2(-view.x, -view.y)
+            var turn = yaw - orbit.yaw
+            turn = atan2(sin(turn), cos(turn))
+            orbit.yaw += 0.05 * turn
+            orbit.pitch += 0.05 * (22 * .pi / 180 - orbit.pitch)
+            orbit.distance += 0.05 * (6 - orbit.distance)
+            orbit.target += 0.15 * (character.position + [0, 0.4, 0] - orbit.target)
+            orbit.place(stage.camera)
+        }
+        try await recorder.render(stage.renderer, deltaTime: 1.0 / 60)
         frames += 1
         if ProcessInfo.processInfo.environment["B3_VIDEO_TRACE"] != nil, frames % 30 == 0 {
             print(frames, waypoint, character.position)
         }
-
-        // A third-person camera behind the walking direction, easing after it
-        view = simd_normalize(simd_mix(view, heading, SIMD2(repeating: 0.04)))
-        let yaw = atan2(-view.x, -view.y)
-        var turn = yaw - orbit.yaw
-        turn = atan2(sin(turn), cos(turn))
-        orbit.yaw += 0.05 * turn
-        orbit.target += 0.15 * (character.position + [0, 0.4, 0] - orbit.target)
-        orbit.place(camera)
-        try await recorder.render(renderer)
         let speed = simd_length((character.position - p) * SIMD3(1, 0, 1)) * Float(framesPerSecond)
         try await recorder.append(lines: [
             "RealityBox3D · B3CharacterControllerComponent on Box3D's mover",
@@ -273,6 +305,7 @@ func renderCradle(_ recorder: Recorder) async throws {
         // Apple's balls are black: a light background keeps them readable at blog size
         let renderer = try makeSampleRenderer(content: scene.content, camera: scene.camera,
                                               background: CGColor(red: 0.62, green: 0.66, blue: 0.72, alpha: 1))
+        try await lightWithStudio(renderer)
         // A first frame creates the world, then the balls are lifted in it
         try await recorder.render(renderer, deltaTime: 1.0 / 60)
         scene.lift(2)
@@ -286,6 +319,31 @@ func renderCradle(_ recorder: Recorder) async throws {
             ], credit: "Apple's sample settings, sizes and joints · bounces resolved pair by pair (Guendelman, Bridson & Fedkiw 2003)")
         }
     }
+}
+
+/// Lights a renderer's scene with a studio, as a RealityView's default environment would: offscreen,
+/// RealityKit has none, and metallic surfaces such as the cradle's balls render black
+@MainActor
+func lightWithStudio(_ renderer: RealityRenderer) async throws {
+    renderer.lighting.resource = try await EnvironmentResource(equirectangular: makeStudio())
+    renderer.lighting.intensityExponent = 0.5
+}
+
+/// An equirectangular studio: a light ceiling with a bright strip and a softbox, a dark floor
+func makeStudio() -> CGImage {
+    let width = 512, height = 256
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: [
+        CGColor(gray: 0.12, alpha: 1), CGColor(gray: 0.3, alpha: 1), CGColor(gray: 0.85, alpha: 1), CGColor(gray: 0.6, alpha: 1),
+    ] as CFArray, locations: [0, 0.48, 0.52, 1])!
+    // Bitmap coordinates start at the bottom: the floor, then the horizon, then the ceiling
+    context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: height), options: [])
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: height * 3 / 4, width: width, height: 14))
+    context.fill(CGRect(x: width / 3, y: height / 2 + 10, width: width / 6, height: height / 3))
+    return context.makeImage()!
 }
 
 // MARK: HUD
@@ -325,6 +383,7 @@ func drawHUD(into base: UnsafeMutableRawPointer, bytesPerRow: Int, lines: [Strin
 // MARK: Main
 
 RealityBox3D.register()
+DemoScriptSystem.register()
 do {
     let recorder = try Recorder(url: URL(fileURLWithPath: output))
     switch reel {
