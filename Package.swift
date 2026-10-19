@@ -13,6 +13,7 @@ let package = Package(
         .executable(name: "Box3DRealityKitSamples", targets: ["Box3DRealityKitSamples"]),
         .executable(name: "b3-bench", targets: ["b3-bench"]),
         .executable(name: "b3-snapshot", targets: ["b3-snapshot"]),
+        .executable(name: "b3-video", targets: ["b3-video"]),
     ],
     targets: [
         // Box3D, vendored unmodified (see UPSTREAM.md)
@@ -75,6 +76,11 @@ let package = Package(
         // Offscreen RealityKit renders of the demo scenes
         .executableTarget(
             name: "b3-snapshot",
+            dependencies: ["Box3DDemoScenes", "Box3DRealityKitSampleScenes"]
+        ),
+        // Offscreen RealityKit videos of the demo scenes and sample ports, for posts and READMEs
+        .executableTarget(
+            name: "b3-video",
             dependencies: ["Box3DDemoScenes", "Box3DRealityKitSampleScenes"]
         ),
         .testTarget(name: "CBox3DTests", dependencies: ["CBox3D"]),
